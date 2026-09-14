@@ -3,14 +3,14 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "saw-amtraker-client"
+name = "saw-livetrack"
 version = "0.1.0"
-description = "Shared Amtraker API client for the Live Track passenger-rail Home Assistant integrations"
+description = "Shared code for the Live Track Home Assistant integrations: source-agnostic fix tracking, plus an Amtraker API client"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 authors = [{ name = "StrausbergAutomationWorks" }]
-keywords = ["amtrak", "via-rail", "brightline", "amtraker", "train-tracking", "home-assistant"]
+keywords = ["home-assistant", "train-tracking", "geo-location", "amtrak", "via-rail", "brightline", "amtraker"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
@@ -20,8 +20,8 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/StrausbergAutomationWorks/AmtrakerClient"
-Issues = "https://github.com/StrausbergAutomationWorks/AmtrakerClient/issues"
+Homepage = "https://github.com/StrausbergAutomationWorks/LiveTrackCore"
+Issues = "https://github.com/StrausbergAutomationWorks/LiveTrackCore/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

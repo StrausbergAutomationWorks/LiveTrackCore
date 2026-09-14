@@ -12,7 +12,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "src"))
 sys.path.insert(0, os.path.join(ROOT, "reference"))
 
-import saw_amtraker as sa  # noqa: E402
+import saw_livetrack as sa  # noqa: E402
 import shared_coordinator as sc  # noqa: E402
 
 CHECKS = []

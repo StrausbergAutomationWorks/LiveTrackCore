@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 
-from saw_amtraker import CONTRACT_VERSION, SHARED_KEY, AmtrakerClient
+from saw_livetrack import CONTRACT_VERSION, SHARED_KEY, AmtrakerClient
 
 _LOGGER = logging.getLogger(__name__)
 

@@ -12,8 +12,8 @@ import os
 
 sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
-import saw_amtraker as ac  # noqa: E402
-import saw_amtraker.client  # noqa: E402
+import saw_livetrack as ac  # noqa: E402
+import saw_livetrack.amtraker  # noqa: E402
 
 CHECKS = []
 
@@ -155,10 +155,10 @@ check("negative elapsed time yields None", ac.derived_speed_kmh(a, b) is None)
 
 
 # --- payload shape: [] is a LIST, not the documented keyed object ----------
-check("list payload flattens to empty", ac.client._flatten([]) == [])
-check("dict payload flattens", len(ac.client._flatten({"b5756": [train()]})) == 1)
-check("None payload flattens to empty", ac.client._flatten(None) == [])
-check("non-dict members ignored", ac.client._flatten({"x": ["junk", train()]}) == [train()])
+check("list payload flattens to empty", ac.amtraker._flatten([]) == [])
+check("dict payload flattens", len(ac.amtraker._flatten({"b5756": [train()]})) == 1)
+check("None payload flattens to empty", ac.amtraker._flatten(None) == [])
+check("non-dict members ignored", ac.amtraker._flatten({"x": ["junk", train()]}) == [train()])
 
 # --- transport: fakes, no network -----------------------------------------
 import json as _json

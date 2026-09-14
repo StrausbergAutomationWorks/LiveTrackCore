@@ -1,42 +1,54 @@
-# saw-amtraker-client
+# saw-livetrack
 
-Shared Amtraker API client for the **Live Track** passenger-rail integrations
-for Home Assistant: Live Track Amtrak, Live Track VIA Rail and Live Track
-Brightline.
+Shared code for the **Live Track** Home Assistant integrations.
 
-Pure Python, no Home Assistant imports. Each integration declares it in
-`manifest.json` `requirements`.
+Two submodules, deliberately separate.
 
-## Why this is a separate package
+## `saw_livetrack.track` — source-agnostic
 
-HACS permits only **one integration per repository**, so three integrations
-cannot share a folder. Vendoring the same client into three repositories is how
-three subtly different clients get written, so it ships as a dependency instead.
+Holds the last two **distinct** fixes per object and emits the `previous_*`
+segment fields, so a consumer can animate between two **observed** positions
+rather than extrapolating toward a projection.
 
-## What it refuses to do, and why
+The bug it prevents is not specific to any feed. **Any** integration whose poll
+interval sits near its source's publish interval receives duplicate fixes, and
+storing a duplicate as the previous fix collapses the segment to zero length —
+which renders as a stutter on the map. Every individual update looks correct in
+isolation; only the sequence is wrong.
 
-Each refusal comes from a measurement against the live feed, not from caution.
+The timestamp extractor is injected, because only the source knows what its own
+timestamp means.
+
+```python
+from saw_livetrack.track import FixTracker
+
+t = FixTracker()                      # or FixTracker(observed_at=my_extractor)
+t.update("vehicle-1", record)
+attrs = t.segment_fields("vehicle-1") # previous_latitude, course_deg, ...
+```
+
+Keys that cannot be supplied honestly are **omitted**, never set to `None` or a
+sentinel. A stationary object has no course, and that absence is correct.
+
+## `saw_livetrack.amtraker` — the Amtraker API client
+
+For Live Track Amtrak, Live Track VIA Rail and Live Track Brightline. One
+cached fetch serves all three providers, since the endpoint takes no parameters
+and returns every train of every provider.
+
+What it refuses to do, and why — each refusal came from a measurement:
 
 | Behaviour | Reason |
 |---|---|
-| `course_deg()` always returns `None` | the feed's direction is an eight-value octant string; converting `"SW"` to `225.0` invents precision the feed never carried |
-| `speed_kmh()` returns `None` for Brightline, even when the field is non-zero | measured 0.0 on every instance while trains covered 76-133 km at 44-77 mph. The field is unpopulated, not stationary |
-| `observed_at()` returns `None` for Brightline | its `lastValTS` advances every 30 s while the position changes every 60 s. It is a feed refresh clock, not an observation time |
+| `course_deg()` always returns `None` | the feed's direction is an eight-value octant string; converting it invents precision the feed never carried. A real course comes from two observed positions instead |
+| `speed_kmh()` returns `None` for Brightline even when non-zero | measured 0.0 on every instance while trains covered 76–133 km at 44–77 mph. The field is unpopulated, not stationary |
+| `observed_at()` returns `None` for Brightline | its timestamp advances every 30 s while the position changes every 60 s — a feed job clock, not an observation time |
 | `observed_at()` returns `None` for `Predeparture` trains | that field then carries a scheduled *future* departure |
-| a finished train is handled by type | the API returns a bare `[]` list, not the documented keyed object |
+| a finished train is handled by type | the API returns a bare `[]`, not the documented keyed object |
 | HTTP 429 raises `RateLimited` | a non-200 must never be recorded as "no data" |
-| an empty `User-Agent` raises at construction | the server blocks such requests, so failing here is clearer than an empty result later |
+| an empty `User-Agent` raises at construction | the server blocks such requests |
 
-A terminal snap - the feed resetting a finished train's position to its
-terminus - is detected by **implied speed**, not by a fixed distance. A flat
-distance threshold discards genuine movement: at 125 mph over the observed
-180 s maximum interval a train legitimately covers 10 km.
-
-## Caching
-
-`/v3/trains` takes no parameters and returns every provider, so N consumers
-would otherwise make N identical system-wide requests. One client instance
-serves all three providers from a single cached fetch.
+`amtraker` imports from `track`. Never the reverse.
 
 ## Data attribution
 

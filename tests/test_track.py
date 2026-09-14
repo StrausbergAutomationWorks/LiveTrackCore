@@ -10,8 +10,19 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "src"))
 
-import saw_amtraker as sa  # noqa: E402
-from saw_amtraker.tracker import FixTracker, bearing_deg  # noqa: E402
+import saw_livetrack as sa  # noqa: E402
+from saw_livetrack.track import FixTracker, bearing_deg  # noqa: E402
+from saw_livetrack.amtraker import observed_at as amtk_observed_at  # noqa: E402
+
+
+def Tracker():
+    """A tracker wired to the Amtraker timestamp rules.
+
+    The extractor is now INJECTED. track.py cannot know that a
+    Predeparture train's timestamp is a scheduled departure, or that one
+    provider stamps its whole fleet from a feed job clock.
+    """
+    return FixTracker(observed_at=amtk_observed_at)
 
 CHECKS = []
 def check(name, cond): CHECKS.append((name, bool(cond)))
@@ -30,7 +41,7 @@ check("bearing west", abs(bearing_deg(25.0, -79.0, 25.0, -80.0) - 270) < 1.0)
 check("bearing is 0-359.9", 0 <= bearing_deg(25.0, -80.0, 24.0, -81.0) < 360)
 
 # --- first sighting: no previous_* -----------------------------------------
-t = FixTracker()
+t = Tracker()
 t.update("a", rec(25.0, -80.0, 0))
 f = t.segment_fields("a")
 check("first sighting has observed_at", "observed_at" in f)
@@ -50,7 +61,7 @@ check("observed_at advanced", f["observed_at"] != f["previous_observed_at"])
 # === THE ALIASING CASE. D3c-iii. ==========================================
 # Brightline: the feed ticks every 30 s, the position moves every 60 s, so
 # EXACTLY every other poll is a duplicate. Feed the real pattern.
-t = FixTracker()
+t = Tracker()
 seq = [(25.0000, 0), (25.0000, 30), (25.0180, 60), (25.0180, 90),
        (25.0360, 120), (25.0360, 150), (25.0540, 180), (25.0540, 210)]
 segs = []
@@ -74,7 +85,7 @@ check("ALIASING: the segment advances across real moves",
       len(set(prevs)) == 3)
 
 # --- stationary train: course_deg must be ABSENT, and that is correct ------
-t = FixTracker()
+t = Tracker()
 t.update("c", rec(25.0, -80.0, 0))
 t.update("c", rec(25.00005, -80.00005, 60))   # ~7 m of GPS jitter
 f = t.segment_fields("c")
@@ -83,7 +94,7 @@ check("stationary train has NO course_deg (D3c-iii: correct, not a bug)",
       "course_deg" not in f)
 
 # a train that moved, then stopped: the segment stays, course goes
-t = FixTracker()
+t = Tracker()
 t.update("d", rec(25.0, -80.0, 0))
 t.update("d", rec(25.0180, -80.0, 60))
 t.update("d", rec(25.01801, -80.0, 120))      # ~1 m
@@ -92,7 +103,7 @@ check("a stopped train keeps its last real segment", "previous_latitude" in f)
 check("a stopped train keeps course from that segment", "course_deg" in f)
 
 # --- terminal snap: the old fix is NOT on the new segment -----------------
-t = FixTracker()
+t = Tracker()
 t.update("e", rec(28.4151, -81.3083, 0))      # Orlando airport
 t.update("e", rec(25.7800, -80.1956, 30))     # Miami, 313 km in 30 s
 f = t.segment_fields("e")
@@ -101,14 +112,14 @@ check("snap drops the stale previous fix", "previous_latitude" not in f)
 check("snap does not invent a course across 313 km", "course_deg" not in f)
 
 # --- a 125 mph train over 180 s is NOT a snap -----------------------------
-t = FixTracker()
+t = Tracker()
 t.update("f", rec(25.0000, -80.0, 0))
 t.update("f", rec(25.0900, -80.0, 180))       # ~10 km in 180 s
 check("10 km in 180 s is real movement, not a snap", t.snaps == 0)
 check("...and it produces a segment", "previous_latitude" in t.segment_fields("f"))
 
 # --- batch-stamped provider: observed_at must be ABSENT -------------------
-t = FixTracker()
+t = Tracker()
 t.update("g", {"provider": "Brightline", "trainState": "Active",
                "lat": 25.0, "lon": -80.0, "lastValTS": "2026-09-13T15:00:00.000Z"})
 t.update("g", {"provider": "Brightline", "trainState": "Active",
@@ -122,16 +133,47 @@ check("Brightline still supplies the position segment",
 check("Brightline still supplies course_deg", "course_deg" in f)
 
 # --- D0: no key is ever present-but-empty --------------------------------
-t = FixTracker()
+t = Tracker()
 t.update("h", rec(25.0, -80.0, 0))
 t.update("h", rec(25.018, -80.0, 60))
 f = t.segment_fields("h")
 check("D0: no value is None", all(v is not None for v in f.values()))
 check("D0: no value is an empty string", all(v != "" for v in f.values()))
-check("bad coordinates are ignored", not FixTracker().update("z",
+check("bad coordinates are ignored", not Tracker().update("z",
       {"provider": "Amtrak", "lat": None, "lon": 1.0, "lastValTS": None}))
 check("forget clears an object", (lambda: (t.forget("h"),
       t.segment_fields("h") == {}))()[1])
+
+
+# --- the source-agnostic DEFAULT extractor, which the split created -------
+plain = FixTracker()          # no extractor supplied
+plain.update("p", {"lat": 25.0, "lon": -80.0,
+                   "observed_at": "2026-09-14T12:00:00+00:00"})
+plain.update("p", {"lat": 25.018, "lon": -80.0,
+                   "observed_at": "2026-09-14T12:01:00+00:00"})
+f = plain.segment_fields("p")
+check("default extractor reads a plain observed_at key", "observed_at" in f)
+check("default extractor yields previous_observed_at", "previous_observed_at" in f)
+check("default extractor still builds the segment", "previous_latitude" in f)
+
+naive = FixTracker()
+naive.update("n", {"lat": 25.0, "lon": -80.0, "observed_at": "2026-09-14T12:00:00"})
+check("default extractor rejects a naive timestamp",
+      "observed_at" not in naive.segment_fields("n"))
+
+none = FixTracker()
+none.update("m", {"lat": 25.0, "lon": -80.0})
+none.update("m", {"lat": 25.018, "lon": -80.0})
+f = none.segment_fields("m")
+check("no timestamp at all still yields a position segment",
+      "previous_latitude" in f and "course_deg" in f)
+check("no timestamp means no observed_at key (D0: omit)", "observed_at" not in f)
+
+# custom coordinate keys, so a non-Amtraker source can use this unchanged
+alt = FixTracker(lat_key="latitude", lon_key="longitude")
+alt.update("k", {"latitude": 25.0, "longitude": -80.0})
+alt.update("k", {"latitude": 25.018, "longitude": -80.0})
+check("custom lat/lon keys work", "previous_latitude" in alt.segment_fields("k"))
 
 failed = [n for n, ok in CHECKS if not ok]
 print("checks: %d   passed: %d   failed: %d"

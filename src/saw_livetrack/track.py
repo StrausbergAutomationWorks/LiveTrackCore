@@ -24,17 +24,55 @@ on every train, every time.
 
 from __future__ import annotations
 
-import datetime as _dt
 import math
 
-from .client import (
-    BATCH_STAMPED,
-    JITTER_M,
-    MAX_PLAUSIBLE_KMH,
-    SNAP_KM,
-    haversine_km,
-    observed_at,
-)
+# --- Generic motion thresholds. Nothing here is Amtraker-specific. --------
+
+# Below this two fixes are the same place. A parked train drifts: measured
+# p50 2 m, max 29 m over 31 min, and a 1 m threshold counted that noise as
+# movement and manufactured a 1,440 s update interval.
+JITTER_M = 50.0
+
+# Fallback displacement bound for fixes that cannot be dated.
+SNAP_KM = 25.0
+
+# A feed reset to a terminus is an impossible SPEED, not a fixed distance. A
+# flat distance test discards genuine movement: at 125 mph over an observed
+# 180 s interval a train legitimately covers 10 km.
+MAX_PLAUSIBLE_KMH = 322.0
+
+
+def haversine_km(lat1, lon1, lat2, lon2):
+    """Great-circle distance in km."""
+    radius = 6371.0088
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlam = math.radians(lon2 - lon1)
+    h = (math.sin(dphi / 2) ** 2
+         + math.cos(p1) * math.cos(p2) * math.sin(dlam / 2) ** 2)
+    return 2 * radius * math.asin(math.sqrt(h))
+
+
+def _default_observed_at(record):
+    """Fallback timestamp extractor: an ISO `observed_at` key, or nothing.
+
+    Sources whose timestamp needs interpreting pass their own callable. The
+    Amtraker one, for instance, knows that a Predeparture train's timestamp is
+    a SCHEDULED DEPARTURE and that one provider's is a feed job clock -- and
+    returns None in both cases rather than dating a position with either.
+    """
+    import datetime as _d
+    v = record.get("observed_at")
+    if not isinstance(v, str) or not v.strip():
+        return None
+    s = v.strip()
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        p = _d.datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    return p if p.tzinfo is not None else None
 
 # Below this, two fixes are the same place and the bearing between them is
 # noise. D3c-iii: a train standing at a station has no course -- leave the key
@@ -68,21 +106,31 @@ class FixTracker:
     segment is re-emitted unchanged rather than destroyed.
     """
 
-    def __init__(self):
+    def __init__(self, observed_at=None, lat_key="lat", lon_key="lon"):
+        """`observed_at` is a callable taking one record and returning an
+        aware datetime, or None when the record's timestamp cannot date the
+        position. Sources differ enough that this must be supplied rather than
+        assumed: one Amtraker provider stamps its whole fleet from a feed job
+        clock, and a Predeparture train's timestamp is a SCHEDULED DEPARTURE,
+        not an observation. Both must yield None, and only the source knows.
+        """
+        self._observed_at = observed_at or _default_observed_at
+        self._lat_key, self._lon_key = lat_key, lon_key
         self._curr = {}      # key -> _Fix, the newest distinct fix
         self._prev = {}      # key -> _Fix, the one before it
         self.duplicates = 0  # polls that carried nothing new
         self.snaps = 0       # feed resets to a terminus
 
-    def _fix_from(self, train):
-        lat, lon = train.get("lat"), train.get("lon")
+    def _fix_from(self, record):
+        lat = record.get(self._lat_key)
+        lon = record.get(self._lon_key)
         if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
             return None
-        return _Fix(lat, lon, observed_at(train))
+        return _Fix(lat, lon, self._observed_at(record))
 
-    def update(self, key, train):
+    def update(self, key, record):
         """Record an observation. Returns True if it advanced the segment."""
-        new = self._fix_from(train)
+        new = self._fix_from(record)
         if new is None:
             return False
 

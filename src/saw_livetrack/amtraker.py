@@ -34,11 +34,6 @@ PROVIDERS = ("Amtrak", "Via", "Brightline")
 
 # --- Measured artefact thresholds. B8, Brightline SSOT section 4.3 ----------
 
-# A parked train drifts: measured p50 2 m, max 29 m over 31 min. A 1 m
-# "did it move" test counts noise as movement and manufactured a 1,440 s
-# update interval.
-JITTER_M = 50.0
-
 # TERMINAL SNAP: on completing a run the feed resets a train's position to the
 # terminus before dropping it. Measured at 313 km in one 30 s tick, an implied
 # 11,670 mph. trainState stayed "Active" and eventCode stayed unchanged, so
@@ -50,12 +45,10 @@ JITTER_M = 50.0
 # legitimately covers 10 km. Fastest scheduled service on this feed is Acela
 # at 150 mph (241 km/h); 322 km/h leaves headroom while still rejecting a
 # 37,560 km/h reset by two orders of magnitude.
-MAX_PLAUSIBLE_KMH = 322.0
 
 # Distance fallback for when the two fixes cannot be dated -- which is exactly
 # the BATCH_STAMPED case where the snap was observed. 25 km is ~2.5x the
 # largest legitimate displacement seen and still 12x below the measured 313 km.
-SNAP_KM = 25.0
 
 # Two clocks, measured with ZERO variance (n=225 and n=74). B8.3.
 FEED_TICK_S = 30.0
@@ -139,15 +132,14 @@ def observed_at(train):
 # Geometry
 # --------------------------------------------------------------------------
 
-def haversine_km(lat1, lon1, lat2, lon2):
-    """Great-circle distance in km."""
-    radius = 6371.0088
-    p1, p2 = math.radians(lat1), math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlam = math.radians(lon2 - lon1)
-    h = (math.sin(dphi / 2) ** 2
-         + math.cos(p1) * math.cos(p2) * math.sin(dlam / 2) ** 2)
-    return 2 * radius * math.asin(math.sqrt(h))
+# haversine_km, JITTER_M, SNAP_KM and MAX_PLAUSIBLE_KMH now live in
+# track.py, which knows nothing about any particular source.
+from .track import (  # noqa: E402,F401
+    JITTER_M,
+    MAX_PLAUSIBLE_KMH,
+    SNAP_KM,
+    haversine_km,
+)
 
 
 def classify_movement(prev, curr):
