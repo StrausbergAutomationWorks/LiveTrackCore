@@ -29,4 +29,10 @@ from .client import (  # noqa: F401
     heading_octant,
 )
 
-__version__ = "0.1.0"
+from .tracker import (  # noqa: F401
+    FixTracker,
+    bearing_deg,
+    COURSE_MIN_M,
+)
+
+__version__ = "0.2.0"
