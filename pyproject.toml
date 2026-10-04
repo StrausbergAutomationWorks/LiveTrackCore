@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "saw-livetrack"
-version = "0.1.0"
-description = "Shared code for the Live Track Home Assistant integrations: source-agnostic fix tracking, plus an Amtraker API client"
+version = "0.2.0"
+description = "Shared code for the Live Track Home Assistant integrations: source-agnostic fix tracking, GTFS and GTFS-Realtime, and an Amtraker API client"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 authors = [{ name = "StrausbergAutomationWorks" }]
-keywords = ["home-assistant", "train-tracking", "geo-location", "amtrak", "via-rail", "brightline", "amtraker"]
+keywords = ["home-assistant", "train-tracking", "geo-location", "amtrak", "via-rail", "brightline", "amtraker", "gtfs", "gtfs-realtime", "commuter-rail"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
@@ -18,6 +18,10 @@ classifiers = [
   "Topic :: Software Development :: Libraries",
 ]
 dependencies = []
+
+[project.optional-dependencies]
+# Only saw_livetrack.gtfs.realtime.decode() needs it. Pinned once, here.
+gtfs = ["gtfs-realtime-bindings==1.0.0"]
 
 [project.urls]
 Homepage = "https://github.com/StrausbergAutomationWorks/LiveTrackCore"

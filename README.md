@@ -2,7 +2,7 @@
 
 Shared code for the **Live Track** Home Assistant integrations.
 
-Two submodules, deliberately separate.
+Three submodules, deliberately separate.
 
 ## `saw_livetrack.track` — source-agnostic
 
@@ -50,6 +50,30 @@ What it refuses to do, and why — each refusal came from a measurement:
 
 `amtraker` imports from `track`. Never the reverse.
 
+## `saw_livetrack.gtfs` — GTFS and GTFS-Realtime
+
+Moved here from Live Track Commuter Rail when Live Track Intercity Rail became
+its second consumer. No Home Assistant code: storage, coordinators, entities and
+config flows stay in each integration.
+
+| Module | Holds |
+|---|---|
+| `realtime` | `Obs`, one vehicle in one poll; `vehicle_time` and `position_of`, the readers every adapter shares; `decode` |
+| `schedule` | a GTFS static zip distilled to stations, line names and (where the realtime feed names stops only by sequence) stop times; the next station and its estimated arrival from TripUpdates |
+| `fleet` | one feed's vehicles across polls: motion, the hold for equipment not in service, held course at rest, grace for a vehicle missing from the feed, and each published record |
+
+What a given feed actually carries is **not** here. Each integration keeps one
+small adapter per railroad that turns that feed into `Obs` records and states
+only what the feed really populates.
+
+```
+pip install "saw-livetrack[gtfs]"
+```
+
+The `gtfs` extra brings the protobuf bindings, which only `decode` needs.
+`import saw_livetrack` does not import this module, so the Amtraker consumers
+neither load it nor need the extra.
+
 ## Data attribution
 
 Train data is provided by **[Amtraker](https://amtraker.com)** and is licensed
@@ -59,6 +83,18 @@ under the [Open Data Commons Attribution License (ODC-By) v1.0](https://opendata
 
 Independent project. Not affiliated with, endorsed by or connected to Amtrak,
 VIA Rail Canada or Brightline.
+
+## Tests
+
+```
+python tests/test_track.py
+python tests/test_amtraker.py
+python tests/test_shared_coordinator.py
+python -m unittest discover -s tests -p "test_gtfs_*.py"
+```
+
+The first three are scripts that exit non-zero on a failed check; run them
+directly, not through `unittest discover`.
 
 ## Licence
 

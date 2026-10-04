@@ -15,7 +15,13 @@ Two submodules, deliberately separate:
                           Brightline. Data from Amtraker (amtraker.com),
                           ODC-By v1.0.
 
-`amtraker` imports from `track`. Never the reverse.
+  saw_livetrack.gtfs      GTFS static and GTFS-Realtime: the vehicle record,
+                          next station and ETA, and the per-feed fleet
+                          (backlog 274). NOT imported here: `import
+                          saw_livetrack.gtfs` explicitly, and install the
+                          `gtfs` extra for its decode().
+
+`amtraker` and `gtfs` import from `track`. Never the reverse.
 
 Not affiliated with Amtrak, VIA Rail Canada or Brightline.
 """
@@ -50,4 +56,4 @@ from .amtraker import (  # noqa: F401
     speed_kmh,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
