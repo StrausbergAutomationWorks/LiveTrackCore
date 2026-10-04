@@ -283,6 +283,23 @@ class Stalled(unittest.TestCase):
         r = self.run_polls([(0, ob()), (90, ob())], static=NEAR)
         self.assertNotIn("stalled", r)
 
+    def test_at_a_stop_stalled_after_platform_hold(self):
+        # Lee 2026-10-04: standing at a platform long after it should have
+        # left is a problem too; 366 s = twice the longest normal dwell.
+        self.assertNotIn("stalled", self.run_polls([(0, ob()), (365, ob())], static=NEAR))
+        self.assertIs(self.run_polls([(0, ob()), (366, ob())], static=NEAR)["stalled"], True)
+
+    def test_platform_hold_counts_from_the_last_move(self):
+        near_end = {"v": V, "stop_pos": {"S": [LAT + 0.005, LON]}}
+        polls = [(0, ob()), (30, ob(0.005)), (395, ob(0.005))]
+        self.assertNotIn("stalled", self.run_polls(polls, static=near_end))
+        polls.append((396, ob(0.005)))
+        self.assertIs(self.run_polls(polls, static=near_end)["stalled"], True)
+
+    def test_platform_hold_settable(self):
+        f = fleet_mod.Fleet(platform_hold_s=120)
+        self.assertIs(self.run_polls([(0, ob()), (120, ob())], static=NEAR, f=f)["stalled"], True)
+
     def test_moving_is_not_stalled(self):
         r = self.run_polls([(0, ob()), (30, ob(0.003)), (60, ob(0.006)), (90, ob(0.009))],
                            static={"v": V, "stop_pos": {"S": [LAT - 0.1, LON]}})
@@ -294,6 +311,13 @@ class Stalled(unittest.TestCase):
         self.assertNotIn("stalled", self.run_polls(polls, static=far))
         polls.append((121, ob(0.003)))      # moved at 30; still for more than REST_S
         self.assertIs(self.run_polls(polls, static=far)["stalled"], True)
+
+    def test_exactly_rest_s_after_a_move_is_still_moving(self):
+        # Fleet calls a vehicle moving while since-last-move <= REST_S, so at
+        # exactly REST_S it is moving, and a moving train is never stalled.
+        far = {"v": V, "stop_pos": {"S": [LAT - 0.1, LON]}}
+        polls = [(0, ob()), (30, ob(0.003)), (30 + fleet_mod.REST_S, ob(0.003))]
+        self.assertNotIn("stalled", self.run_polls(polls, static=far))
 
     def test_equipment_not_in_service_never(self):
         f = fleet_mod.Fleet()
@@ -329,6 +353,9 @@ class Defaults275(unittest.TestCase):
     def test_stall_m(self):
         self.assertEqual(fleet_mod.STALL_M, 300.0)
         self.assertEqual(fleet_mod.Fleet()._stall_m, 300.0)
+        self.assertEqual(fleet_mod.PLATFORM_HOLD_S, 366)
+        self.assertEqual(fleet_mod.Fleet()._platform_hold_s, 366)
+        self.assertIs(gtfs.PLATFORM_HOLD_S, fleet_mod.PLATFORM_HOLD_S)
         self.assertIs(gtfs.STALL_M, fleet_mod.STALL_M)
         self.assertIs(gtfs.stop_delays, schedule.stop_delays)
         self.assertEqual(schedule.STATIC_VERSION, 3)

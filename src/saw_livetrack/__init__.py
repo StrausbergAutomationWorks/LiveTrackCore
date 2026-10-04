@@ -56,4 +56,4 @@ from .amtraker import (  # noqa: F401
     speed_kmh,
 )
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"

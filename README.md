@@ -60,7 +60,7 @@ config flows stay in each integration.
 |---|---|
 | `realtime` | `Obs`, one vehicle in one poll; `vehicle_time` and `position_of`, the readers every adapter shares; `decode` |
 | `schedule` | a GTFS static zip distilled to stations, their coordinates, line names, scheduled times for the trips running yesterday, today and tomorrow, and (where the realtime feed names stops only by sequence) stop times; the next station, its estimated arrival, and the delay there (`stop_delays`: the feed's own delay, else predicted minus scheduled) from TripUpdates |
-| `fleet` | one feed's vehicles across polls: motion, the hold for equipment not in service, held course at rest, grace for a vehicle missing from the feed, and each published record, with `delay_min` (whole minutes toward zero) and `stalled` (in service, still for `REST_S`, farther than `STALL_M` from every stop) |
+| `fleet` | one feed's vehicles across polls: motion, the hold for equipment not in service, held course at rest, grace for a vehicle missing from the feed, and each published record, with `delay_min` (whole minutes toward zero) and `stalled` (in service and standing: for `REST_S` when farther than `STALL_M` from every stop, for `PLATFORM_HOLD_S` when at a stop) |
 
 What a given feed actually carries is **not** here. Each integration keeps one
 small adapter per railroad that turns that feed into `Obs` records and states

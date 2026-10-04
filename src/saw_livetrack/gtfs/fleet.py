@@ -84,6 +84,19 @@ MAX_SEGMENT_S = 600
 # 300 m sits in that gap (Lee 2026-10-04: 300, not the 200 first proposed).
 STALL_M = 300.0
 
+# Within STALL_M of a stop (a platform, or a terminal's layover track) a
+# train is stalled only after standing this long (Lee 2026-10-04 03:48:
+# "a train standing at a platform for a long time when it is scheduled to
+# be moving is a problem"; Metra holds trains at stations when a line is
+# stopped). TWICE the longest normal platform dwell found, Lee's rule.
+# MEASURED (bin\ltcr275_dwell.txt): 235 standing spells at intermediate
+# stops, 2026-10-02 PM peak and 2026-10-03 late evening; p50 31 s, p95 90 s;
+# longest 183 s (ME 223 at 111th St., still standing when the capture
+# ended), then 154 s. Excluded as not normal: UP-W 517, 564 s at River
+# Forest while 32 minutes late. Metra's timetable schedules 0 s at every
+# intermediate stop, so it cannot say. 2 x 183 = 366.
+PLATFORM_HOLD_S = 366
+
 
 def metres(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Great-circle distance in metres."""
@@ -110,11 +123,13 @@ class Fleet:
         grace_s: float = GRACE_S,
         max_segment_s: float = MAX_SEGMENT_S,
         stall_m: float = STALL_M,
+        platform_hold_s: float = PLATFORM_HOLD_S,
     ) -> None:
         self._styling = styling
         self._jitter_m, self._hold_s, self._rest_s = jitter_m, hold_s, rest_s
         self._grace_s, self._max_segment_s = grace_s, max_segment_s
         self._stall_m = stall_m
+        self._platform_hold_s = platform_hold_s
         self._tracker = FixTracker(observed_at=_obs_time)
         self._fixed: set[str] = set()                 # seen by the tracker
         self._anchor: dict[str, tuple[float, float]] = {}
@@ -141,16 +156,21 @@ class Fleet:
             return True
         return False
 
-    def _far_from_stops(self, obs: Obs, static: dict[str, Any] | None) -> bool:
-        """True only when the timetable's stop coordinates are known and every
-        stop is farther than stall_m. Unknown is never 'far'."""
-        if not static or static.get("v") != STATIC_VERSION:
+    def _stalled(self, obs: Obs, static: dict[str, Any] | None, still_s: float) -> bool:
+        """Stood too long for where it stands (06_MAP_CONTRACT.md D4c).
+
+        Farther than stall_m from every stop: still for rest_s. Within
+        stall_m of a stop (a platform, or a terminal's layover track): still
+        for platform_hold_s. Stop coordinates unknown: never.
+        """
+        if still_s < self._rest_s or not static or static.get("v") != STATIC_VERSION:
             return False
         pos = static.get("stop_pos") or {}
         if not pos:
             return False
-        return all(metres(obs.lat, obs.lon, p[0], p[1]) > self._stall_m
-                   for p in pos.values())
+        far = all(metres(obs.lat, obs.lon, p[0], p[1]) > self._stall_m
+                  for p in pos.values())
+        return far or still_s >= self._platform_hold_s
 
     def _since_moved(self, vid: str, now: float) -> float | None:
         t = self._last_moved.get(vid)
@@ -225,12 +245,12 @@ class Fleet:
             if not visible:
                 continue
             moving = since is not None and since <= self._rest_s
-            # Held: still for rest_s, counted from its last move, or from first
-            # sight when it has not moved since (a restart forgets moves).
+            # How long it has stood: from its last move, or from first sight
+            # when it has not moved since (a restart forgets moves).
             still_since = self._last_moved.get(vid, self._first_seen[vid])
-            held = not moving and now - still_since >= self._rest_s
+            still_s = 0.0 if moving else now - still_since
             vehicles[vid] = self._record(obs, seg, moving, jumped, delays, next_stops, static,
-                                         held=held, trip_delays=trip_delays)
+                                         still_s=still_s, trip_delays=trip_delays)
 
         departed: list[str] = []
         # Published before, still in the feed, now hidden: parked long enough.
@@ -260,7 +280,7 @@ class Fleet:
     def _record(self, obs: Obs, seg: dict, moving: bool, jumped: bool,
                 delays: dict[str, int] | None,
                 next_stops: dict[str, tuple[str, float | None]] | None = None,
-                static: dict[str, Any] | None = None, *, held: bool = False,
+                static: dict[str, Any] | None = None, *, still_s: float = 0.0,
                 trip_delays: dict[str, int] | None = None) -> dict[str, Any]:
         vid = obs.vehicle_id
         if obs.in_service:
@@ -328,9 +348,9 @@ class Fleet:
                 # delay_min >= 6 is late by Metra's on-time standard (on time =
                 # within 5:59 of schedule). 06_MAP_CONTRACT.md D4c.
                 rec["delay_min"] = int(d / 60)
-            # Standing away from any stop (backlog 275, D4c): physics only;
-            # whether it is also late is the consumer's call.
-            if held and self._far_from_stops(obs, static):
+            # Standing too long for where it stands (backlog 275, D4c):
+            # physics only; whether it is also late is the consumer's call.
+            if self._stalled(obs, static, still_s):
                 rec["stalled"] = True
         # Next station and when (schedule.py). Only in service, only when the
         # trip named its next stop; the time only when there is one
