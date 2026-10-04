@@ -20,8 +20,12 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-# Only saw_livetrack.gtfs.realtime.decode() needs it. Pinned once, here.
-gtfs = ["gtfs-realtime-bindings==1.0.0"]
+# The bindings: only saw_livetrack.gtfs.realtime.decode() needs them. Pinned once, here.
+# tzdata: schedule.py reads GTFS times in the agency's zone through zoneinfo. Where
+# the OS has no IANA database (Windows; slim containers) ZoneInfo fails and
+# next_stops publishes nothing, silently. Measured in a clean Windows venv
+# during the 0.2.0 release check: every Metra next stop missing until it was installed.
+gtfs = ["gtfs-realtime-bindings==1.0.0", "tzdata"]
 
 [project.urls]
 Homepage = "https://github.com/StrausbergAutomationWorks/LiveTrackCore"

@@ -70,7 +70,9 @@ only what the feed really populates.
 pip install "saw-livetrack[gtfs]"
 ```
 
-The `gtfs` extra brings the protobuf bindings, which only `decode` needs.
+The `gtfs` extra brings the protobuf bindings, which only `decode` needs, and
+`tzdata`, without which `schedule` cannot read a timetable's times on a system
+with no timezone database and publishes no next station.
 `import saw_livetrack` does not import this module, so the Amtraker consumers
 neither load it nor need the extra.
 
