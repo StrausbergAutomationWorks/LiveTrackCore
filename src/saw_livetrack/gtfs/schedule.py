@@ -40,7 +40,11 @@ from zoneinfo import ZoneInfo
 
 # Format of the distilled cache; a different number means rebuild it.
 # 2 (2026-10-03): routes (line names) and, with stop_times, trip_routes.
-STATIC_VERSION = 2
+# 3 (2026-10-04, backlog 275): stop_pos (stop coordinates, for `stalled`)
+#   and sched (scheduled seconds by trip and stop, for the trips running
+#   yesterday, today or tomorrow: delay where a feed sends predicted times
+#   and no delay, which is Metra).
+STATIC_VERSION = 3
 
 # An update for a stop this far in the past is a stop already served.
 PAST_S = 30
@@ -83,8 +87,16 @@ def line_name(static: dict[str, Any] | None, line: str | None,
     return name or None
 
 
-def distill(raw: bytes, *, stop_times: bool) -> dict[str, Any]:
+def distill(raw: bytes, *, stop_times: bool,
+            today: date | None = None) -> dict[str, Any]:
     """A GTFS static zip -> the little this module needs, JSON-ready.
+
+    Always: stops (names), stop_pos (coordinates), routes, and sched -
+    {trip: {stop_id: seconds}} for the trips running on `today` (the
+    agency's date when None) and the day either side. Measured on Metra
+    2026-10-04: 977 of 8,504 trips, ~320 KB of JSON against ~4.7 MB
+    for every trip (bin\\ltcr275_measure.txt). Refreshed daily, the
+    window always holds today.
 
     stop_times only where the realtime feed cannot name the stop itself:
     Metra's stop_times.txt is ~14 MB and its feed names every stop.
@@ -101,6 +113,18 @@ def distill(raw: bytes, *, stop_times: bool) -> dict[str, Any]:
         "routes": {r["route_id"]: _clean(r.get("route_long_name") or r.get("route_short_name") or "")
                    for r in _rows_opt(z, "routes.txt") if r.get("route_id")},
     }
+    # Stop coordinates, for `stalled` (fleet.py): a train standing farther
+    # than STALL_M from every stop is not at a platform. Backlog 275.
+    pos: dict[str, list[float]] = {}
+    for r in _rows(z, "stops.txt"):
+        try:
+            if r.get("stop_id"):
+                pos[r["stop_id"]] = [round(float(r["stop_lat"]), 6),
+                                     round(float(r["stop_lon"]), 6)]
+        except (KeyError, ValueError):
+            continue
+    out["stop_pos"] = pos
+    out["sched"] = _scheduled(z, out["tz"], today)
     if stop_times:
         # Where the realtime feed names a trip but not its route (NICTD:
         # route_id always empty, trip_id the train number).
@@ -114,6 +138,58 @@ def distill(raw: bytes, *, stop_times: bool) -> dict[str, Any]:
             if trip and seq and when:
                 st.setdefault(trip, {})[str(int(seq))] = [r.get("stop_id", ""), when]
         out["stop_times"] = st
+    return out
+
+
+_WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday",
+             "saturday", "sunday")
+
+
+def _active(cal: list[dict[str, str]], dates: list[dict[str, str]], day: date) -> set[str]:
+    """service_ids running on `day`: calendar.txt, then calendar_dates.txt
+    exceptions (1 adds, 2 removes)."""
+    wd, ymd = _WEEKDAYS[day.weekday()], day.strftime("%Y%m%d")
+    on = {r["service_id"] for r in cal
+          if r.get("service_id") and r.get(wd) == "1"
+          and r.get("start_date", "") <= ymd <= r.get("end_date", "")}
+    for r in dates:
+        if r.get("date") == ymd and r.get("service_id"):
+            if r.get("exception_type") == "1":
+                on.add(r["service_id"])
+            elif r.get("exception_type") == "2":
+                on.discard(r["service_id"])
+    return on
+
+
+def _scheduled(z: zipfile.ZipFile, tz_name: str,
+               today: date | None) -> dict[str, dict[str, int]]:
+    """{trip_id: {stop_id: GTFS seconds}} for trips running the day before,
+    on, or after `today`. Every trip when the zip carries no calendar."""
+    if "stop_times.txt" not in z.namelist():
+        return {}
+    if today is None:
+        try:
+            today = datetime.now(ZoneInfo(tz_name)).date()
+        except Exception:  # noqa: BLE001 - an unknown zone name in a timetable
+            today = datetime.now(timezone.utc).date()
+    cal, dates = _rows_opt(z, "calendar.txt"), _rows_opt(z, "calendar_dates.txt")
+    keep: set[str] | None = None
+    if cal or dates:
+        on: set[str] = set()
+        for d in (-1, 0, 1):
+            on |= _active(cal, dates, today + timedelta(days=d))
+        keep = {r["trip_id"] for r in _rows_opt(z, "trips.txt")
+                if r.get("trip_id") and r.get("service_id") in on}
+    out: dict[str, dict[str, int]] = {}
+    for r in _rows(z, "stop_times.txt"):
+        trip, stop = r.get("trip_id"), r.get("stop_id")
+        if not trip or not stop or (keep is not None and trip not in keep):
+            continue
+        secs = _gtfs_seconds(r.get("arrival_time") or r.get("departure_time") or "")
+        if secs is not None:
+            # A stop visited twice keeps its later time; none on Metra
+            # (0 of 8,504 trips, measured 2026-10-04).
+            out.setdefault(trip, {})[stop] = secs
     return out
 
 
@@ -227,6 +303,75 @@ def next_stops(feed, static: dict[str, Any] | None,
             if name:
                 ok = when is not None and when <= now + AHEAD_S
                 out[trip_id] = (name, when if ok else None)
+            break
+    return out
+
+
+def _scheduled_at(secs: int, tz: ZoneInfo, anchor: float,
+                  start_date: str | None) -> float:
+    """The epoch of a GTFS time: on the trip's start_date when the feed
+    sends one, else on the service day that puts it nearest `anchor`."""
+    if start_date and len(start_date) == 8 and start_date.isdigit():
+        day = date(int(start_date[:4]), int(start_date[4:6]), int(start_date[6:]))
+        return _service_day_epoch(day, tz, secs)
+    today = datetime.fromtimestamp(anchor, tz).date()
+    return min((_service_day_epoch(today + timedelta(days=d), tz, secs)
+                for d in (-1, 0, 1)), key=lambda t: abs(t - anchor))
+
+
+def stop_delays(feed, static: dict[str, Any] | None,
+                now: float) -> dict[str, int]:
+    """{trip_id: seconds late at the next stop}, negative when early.
+
+    Backlog 275 (Lee 2026-10-04): a delay for every train in service. The
+    next stop is chosen exactly as next_stops chooses it. Its delay is the
+    stop update's own delay field when the feed sends one (NICTD);
+    otherwise the predicted time minus the timetable's (Metra: 0 of 7,318
+    recorded stop updates carry a delay field, bin\\saw_835.txt). One rule
+    set, chosen by what the update carries, never by operator.
+
+    Absent, never 0, when neither is known. Where the feed sends the trip's
+    start_date the service day is known, and a delay up to a day either way
+    is kept; without it the day is a guess, and a delay beyond AHEAD_S either
+    way is taken for a wrong guess and dropped.
+    """
+    out: dict[str, int] = {}
+    if feed is None:
+        return out
+    usable = bool(static) and static.get("v") == STATIC_VERSION
+    tz = None
+    if usable:
+        try:
+            tz = ZoneInfo(static.get("tz") or "UTC")
+        except Exception:  # noqa: BLE001 - an unknown zone name in a timetable
+            usable = False
+    sched = (static.get("sched") or {}) if usable else {}
+    for ent in feed.entity:
+        if not ent.HasField("trip_update"):
+            continue
+        tu = ent.trip_update
+        trip_id = (tu.trip.trip_id or "").strip()
+        if not trip_id:
+            continue
+        start = (tu.trip.start_date or "").strip() if tu.trip.HasField("start_date") else None
+        updates = sorted(tu.stop_time_update,
+                         key=lambda s: s.stop_sequence if s.HasField("stop_sequence") else 0)
+        for stu in updates:
+            if usable:
+                _, when = _resolve(stu, trip_id, start, static, tz, now)
+            else:
+                when = _update_time(stu)
+            if when is not None and when < now - PAST_S:
+                continue         # already served
+            delay = _update_delay(stu)
+            if delay is None and when is not None and usable:
+                stop_id = stu.stop_id.strip() if stu.HasField("stop_id") else ""
+                secs = sched.get(trip_id, {}).get(stop_id)
+                if secs is not None:
+                    delay = round(when - _scheduled_at(secs, tz, when, start))
+            dated = bool(start) and len(start) == 8 and start.isdigit()
+            if delay is not None and abs(delay) <= (86400 if dated else AHEAD_S):
+                out[trip_id] = int(delay)
             break
     return out
 

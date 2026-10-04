@@ -42,7 +42,7 @@ from typing import Any, Callable, Iterable
 from ..track import FixTracker
 
 from .realtime import Obs
-from .schedule import iso_utc, line_name
+from .schedule import STATIC_VERSION, iso_utc, line_name
 
 # --- Motion (06_MAP_CONTRACT.md D8) -------------------------------------
 # Moved / not moved. A parked vehicle's reported position wanders: Brightline
@@ -75,6 +75,15 @@ GRACE_S = 180
 # invention. Carried over from Live Track South Shore.
 MAX_SEGMENT_S = 600
 
+# A train in service standing farther than this from every stop in the
+# timetable is `stalled` (backlog 275; a platform dwell is normal). MEASURED
+# 2026-10-04 on the 2026-10-02 PM peak (bin\ltcr275_measure.txt): of 56
+# Metra dwells of REST_S or more, 39 lay within 200 m of a stop, two at
+# 241 m (New Lenox) and 255 m (University Park), then nothing until 350 m;
+# everything beyond was a terminal layover or a hold between stations.
+# 300 m sits in that gap (Lee 2026-10-04: 300, not the 200 first proposed).
+STALL_M = 300.0
+
 
 def metres(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Great-circle distance in metres."""
@@ -100,10 +109,12 @@ class Fleet:
         rest_s: float = REST_S,
         grace_s: float = GRACE_S,
         max_segment_s: float = MAX_SEGMENT_S,
+        stall_m: float = STALL_M,
     ) -> None:
         self._styling = styling
         self._jitter_m, self._hold_s, self._rest_s = jitter_m, hold_s, rest_s
         self._grace_s, self._max_segment_s = grace_s, max_segment_s
+        self._stall_m = stall_m
         self._tracker = FixTracker(observed_at=_obs_time)
         self._fixed: set[str] = set()                 # seen by the tracker
         self._anchor: dict[str, tuple[float, float]] = {}
@@ -112,6 +123,7 @@ class Fleet:
         self._known: set[str] = set()                 # in the feed, or in grace
         self._missing: dict[str, float] = {}          # vid -> first poll missed
         self._published: set[str] = set()
+        self._first_seen: dict[str, float] = {}       # since when still, before any move
 
     # -- motion ----------------------------------------------------------
     def _moved(self, obs: Obs, now: float) -> bool:
@@ -129,6 +141,17 @@ class Fleet:
             return True
         return False
 
+    def _far_from_stops(self, obs: Obs, static: dict[str, Any] | None) -> bool:
+        """True only when the timetable's stop coordinates are known and every
+        stop is farther than stall_m. Unknown is never 'far'."""
+        if not static or static.get("v") != STATIC_VERSION:
+            return False
+        pos = static.get("stop_pos") or {}
+        if not pos:
+            return False
+        return all(metres(obs.lat, obs.lon, p[0], p[1]) > self._stall_m
+                   for p in pos.values())
+
     def _since_moved(self, vid: str, now: float) -> float | None:
         t = self._last_moved.get(vid)
         return None if t is None else now - t
@@ -136,7 +159,8 @@ class Fleet:
     # -- bookkeeping -----------------------------------------------------
     def forget(self, vid: str) -> None:
         self._tracker.forget(vid)
-        for store in (self._anchor, self._last_moved, self._course, self._missing):
+        for store in (self._anchor, self._last_moved, self._course, self._missing,
+                      self._first_seen):
             store.pop(vid, None)
         self._fixed.discard(vid)
         self._known.discard(vid)
@@ -156,6 +180,7 @@ class Fleet:
         delays: dict[str, int] | None = None,
         next_stops: dict[str, tuple[str, float | None]] | None = None,
         static: dict[str, Any] | None = None,
+        trip_delays: dict[str, int] | None = None,
     ) -> dict[str, Any]:
         vehicles: dict[str, dict[str, Any]] = {}
         seen: set[str] = set()
@@ -169,6 +194,7 @@ class Fleet:
             seen.add(vid)
             self._known.add(vid)
             self._missing.pop(vid, None)
+            self._first_seen.setdefault(vid, now)
 
             had_fix = vid in self._fixed
             advanced = self._tracker.update(
@@ -199,7 +225,12 @@ class Fleet:
             if not visible:
                 continue
             moving = since is not None and since <= self._rest_s
-            vehicles[vid] = self._record(obs, seg, moving, jumped, delays, next_stops, static)
+            # Held: still for rest_s, counted from its last move, or from first
+            # sight when it has not moved since (a restart forgets moves).
+            still_since = self._last_moved.get(vid, self._first_seen[vid])
+            held = not moving and now - still_since >= self._rest_s
+            vehicles[vid] = self._record(obs, seg, moving, jumped, delays, next_stops, static,
+                                         held=held, trip_delays=trip_delays)
 
         departed: list[str] = []
         # Published before, still in the feed, now hidden: parked long enough.
@@ -229,7 +260,8 @@ class Fleet:
     def _record(self, obs: Obs, seg: dict, moving: bool, jumped: bool,
                 delays: dict[str, int] | None,
                 next_stops: dict[str, tuple[str, float | None]] | None = None,
-                static: dict[str, Any] | None = None) -> dict[str, Any]:
+                static: dict[str, Any] | None = None, *, held: bool = False,
+                trip_delays: dict[str, int] | None = None) -> dict[str, Any]:
         vid = obs.vehicle_id
         if obs.in_service:
             label = obs.train or vid
@@ -283,8 +315,23 @@ class Fleet:
                 rec["icon_rotation_deg"] = course
                 rec["icon_rotation_basis"] = "held"
 
-        if obs.in_service and delays and obs.train in delays:
-            rec["delay_min"] = round(delays[obs.train] / 60)
+        if obs.in_service:
+            # By trip from stop_delays (one rule for every feed), else the
+            # adapter's own by train number.
+            d = None
+            if trip_delays and obs.trip_id and obs.trip_id in trip_delays:
+                d = trip_delays[obs.trip_id]
+            elif delays and obs.train in delays:
+                d = delays[obs.train]
+            if d is not None:
+                # Whole minutes toward zero (Lee 2026-10-04): 5:59 reads 5, so
+                # delay_min >= 6 is late by Metra's on-time standard (on time =
+                # within 5:59 of schedule). 06_MAP_CONTRACT.md D4c.
+                rec["delay_min"] = int(d / 60)
+            # Standing away from any stop (backlog 275, D4c): physics only;
+            # whether it is also late is the consumer's call.
+            if held and self._far_from_stops(obs, static):
+                rec["stalled"] = True
         # Next station and when (schedule.py). Only in service, only when the
         # trip named its next stop; the time only when there is one
         # (06_MAP_CONTRACT.md D4b). Absent, never empty (D0).

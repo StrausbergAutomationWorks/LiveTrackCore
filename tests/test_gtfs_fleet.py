@@ -236,7 +236,8 @@ class NextStopAndLine(unittest.TestCase):
     """What Commuter Rail's ToTheMap tests checked through its attributes,
     checked here on the Fleet record."""
 
-    STATIC = {"v": 2, "routes": {"UP-NW": "Union Pacific Northwest"}, "trip_routes": {}}
+    STATIC = {"v": fleet_mod.STATIC_VERSION, "routes": {"UP-NW": "Union Pacific Northwest"},
+              "trip_routes": {}}
 
     def obs(self, **kw):
         base = dict(vid="8461", train="669", line="UP-NW")
