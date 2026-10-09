@@ -44,7 +44,10 @@ from zoneinfo import ZoneInfo
 #   and sched (scheduled seconds by trip and stop, for the trips running
 #   yesterday, today or tomorrow: delay where a feed sends predicted times
 #   and no delay, which is Metra).
-STATIC_VERSION = 3
+# 4 (2026-10-08): feed_version, feed_start, feed_end from feed_info.txt,
+#   for Metra's GTFS static change (its Developer Change Notice asks
+#   consumers to log feed_version; NICTD's zip already carries the file).
+STATIC_VERSION = 4
 
 # An update for a stop this far in the past is a stop already served.
 PAST_S = 30
@@ -113,6 +116,13 @@ def distill(raw: bytes, *, stop_times: bool,
         "routes": {r["route_id"]: _clean(r.get("route_long_name") or r.get("route_short_name") or "")
                    for r in _rows_opt(z, "routes.txt") if r.get("route_id")},
     }
+    # Which published dataset this is (feed_info.txt, optional; header-only
+    # or absent gives None). For diagnostics and the log, never for logic.
+    info = _rows_opt(z, "feed_info.txt")
+    info = info[0] if info else {}
+    out["feed_version"] = info.get("feed_version") or None
+    out["feed_start"] = info.get("feed_start_date") or None
+    out["feed_end"] = info.get("feed_end_date") or None
     # Stop coordinates, for `stalled` (fleet.py): a train standing farther
     # than STALL_M from every stop is not at a platform. Backlog 275.
     pos: dict[str, list[float]] = {}
@@ -374,6 +384,39 @@ def stop_delays(feed, static: dict[str, Any] | None,
                 out[trip_id] = int(delay)
             break
     return out
+
+
+def trip_coverage(feed, static: dict[str, Any] | None) -> tuple[int, int]:
+    """(trips the timetable knows, trips referenced) in a TripUpdates feed.
+
+    A cached timetable older (or newer) than the realtime feed's trip ids
+    matches none of them, and every delay computed from it vanishes with no
+    error anywhere. Metra's 2026 GTFS static change renames every trip_id
+    (BNSF_BN1200_V4_A -> BNSF_1200_8_2009_5682524) in both feeds at its
+    cutover, and a timetable refreshed once a day can sit on the wrong side
+    of it for hours. A low share tells the caller to refresh early.
+
+    Known trips: `sched` (running yesterday, today or tomorrow) and
+    `stop_times`. Measured 2026-10-08 on the 40 recorded polls of
+    2026-10-03: Metra 739 of 739, NICTD 191 of 191
+    (bin\\ltcr_offshape_measure.txt). (0, 0) with no feed or no usable
+    timetable.
+    """
+    if feed is None or not static or static.get("v") != STATIC_VERSION:
+        return 0, 0
+    sched = static.get("sched") or {}
+    st = static.get("stop_times") or {}
+    hit = total = 0
+    for ent in feed.entity:
+        if not ent.HasField("trip_update"):
+            continue
+        trip_id = (ent.trip_update.trip.trip_id or "").strip()
+        if not trip_id:
+            continue
+        total += 1
+        if trip_id in sched or trip_id in st:
+            hit += 1
+    return hit, total
 
 
 def iso_utc(epoch: float) -> str:

@@ -1,7 +1,8 @@
 """saw_livetrack.gtfs - shared GTFS and GTFS-Realtime code (backlog 274).
 
   realtime   Obs (one vehicle in one poll), vehicle_time, position_of, decode
-  schedule   static GTFS distilled; next station, estimated arrival, delay
+  schedule   static GTFS distilled; next station, estimated arrival, delay;
+               trip_coverage (is the cached timetable the realtime feed's)
   fleet      one feed's vehicles across polls: what to publish, each record
 
 No Home Assistant imports. Only realtime.decode() needs the protobuf
@@ -19,6 +20,7 @@ from .schedule import (  # noqa: F401
     line_name,
     next_stops,
     stop_delays,
+    trip_coverage,
 )
 from .fleet import (  # noqa: F401
     GRACE_S,

@@ -59,7 +59,7 @@ config flows stay in each integration.
 | Module | Holds |
 |---|---|
 | `realtime` | `Obs`, one vehicle in one poll; `vehicle_time` and `position_of`, the readers every adapter shares; `decode` |
-| `schedule` | a GTFS static zip distilled to stations, their coordinates, line names, scheduled times for the trips running yesterday, today and tomorrow, and (where the realtime feed names stops only by sequence) stop times; the next station, its estimated arrival, and the delay there (`stop_delays`: the feed's own delay, else predicted minus scheduled) from TripUpdates |
+| `schedule` | a GTFS static zip distilled to stations, their coordinates, line names, scheduled times for the trips running yesterday, today and tomorrow, and (where the realtime feed names stops only by sequence) stop times; the next station, its estimated arrival, and the delay there (`stop_delays`: the feed's own delay, else predicted minus scheduled) from TripUpdates; the dataset's `feed_version` from `feed_info.txt` when present; and `trip_coverage`, how many of a TripUpdates feed's trips the cached timetable knows (a low share means it is out of date: Metra's 2026 GTFS static change renames every trip id) |
 | `fleet` | one feed's vehicles across polls: motion, the hold for equipment not in service, held course at rest, grace for a vehicle missing from the feed, and each published record, with `delay_min` (whole minutes toward zero) and `stalled` (in service and standing: for `REST_S` when farther than `STALL_M` from every stop, for `PLATFORM_HOLD_S` when at a stop) |
 
 What a given feed actually carries is **not** here. Each integration keeps one

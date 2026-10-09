@@ -191,7 +191,7 @@ class DistillV3(unittest.TestCase):
     def test_stop_pos_rounded_and_blank_skipped(self):
         d = schedule.distill(_zip(self.BASE), stop_times=False, today=date(2026, 10, 4))
         self.assertEqual(d["stop_pos"], {"A": [41.881235, -87.639877]})
-        self.assertEqual(d["v"], 3)
+        self.assertEqual(d["v"], 4)   # 4 since 0.2.3 (feed_info); 3 added stop_pos
 
     def test_window_is_yesterday_today_tomorrow(self):
         # 2026-10-04 is a Sunday. Saturday 10-03 is removed for SA by
@@ -358,7 +358,7 @@ class Defaults275(unittest.TestCase):
         self.assertIs(gtfs.PLATFORM_HOLD_S, fleet_mod.PLATFORM_HOLD_S)
         self.assertIs(gtfs.STALL_M, fleet_mod.STALL_M)
         self.assertIs(gtfs.stop_delays, schedule.stop_delays)
-        self.assertEqual(schedule.STATIC_VERSION, 3)
+        self.assertEqual(schedule.STATIC_VERSION, 4)   # 0.2.3: feed_info fields
 
 
 if __name__ == "__main__":
