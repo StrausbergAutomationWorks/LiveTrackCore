@@ -60,7 +60,7 @@ config flows stay in each integration.
 |---|---|
 | `realtime` | `Obs`, one vehicle in one poll; `vehicle_time` and `position_of`, the readers every adapter shares; `decode` |
 | `schedule` | a GTFS static zip distilled to stations, their coordinates, line names, scheduled times for the trips running yesterday, today and tomorrow, and (where the realtime feed names stops only by sequence) stop times; the next station, its estimated arrival, and the delay there (`stop_delays`: the feed's own delay, else predicted minus scheduled) from TripUpdates; the dataset's `feed_version` from `feed_info.txt` when present; and `trip_coverage`, how many of a TripUpdates feed's trips the cached timetable knows (a low share means it is out of date: Metra's 2026 GTFS static change renames every trip id) |
-| `fleet` | one feed's vehicles across polls: motion, the hold for equipment not in service, held course at rest, grace for a vehicle missing from the feed, and each published record, with `delay_min` (whole minutes toward zero) and `stalled` (in service and standing: for `REST_S` when farther than `STALL_M` from every stop, for `PLATFORM_HOLD_S` when at a stop) |
+| `fleet` | one feed's vehicles across polls: motion, the hold for equipment not in service, held course at rest, grace for a vehicle missing from the feed, and each published record, with `delay_min` (whole minutes toward zero) and `stalled` (in service and standing: for `REST_S` when farther than `STALL_M` from every stop, for `PLATFORM_HOLD_S` when at a stop); with an `on_rail` check, a train in service whose fix is not on rail is held at its last fix on rail for at most `REFUSED_HOLD_S`, then hidden |
 
 What a given feed actually carries is **not** here. Each integration keeps one
 small adapter per railroad that turns that feed into `Obs` records and states
@@ -75,6 +75,14 @@ The `gtfs` extra brings the protobuf bindings, which only `decode` needs, and
 with no timezone database and publishes no next station.
 `import saw_livetrack` does not import this module, so the Amtraker consumers
 neither load it nor need the extra.
+
+## `saw_livetrack.rail` — is this position on a railway?
+
+`RailIndex(lines)` indexes rail lines, each a sequence of (lat, lon), on a 0.01 degree
+grid; `distance_m(lat, lon, within_m)` and `near(lat, lon, within_m)` answer from it.
+No dependencies. The lines are the caller's: an integration ships them as data
+(Live Track Commuter Rail builds one file per railroad from the FRA North American
+Rail Network, public domain). `Fleet(on_rail=...)` takes such a check.
 
 ## Data attribution
 

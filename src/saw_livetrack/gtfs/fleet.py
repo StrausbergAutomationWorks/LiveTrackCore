@@ -31,10 +31,17 @@ publishing its approach course as a measurement").
 so there is no history to consult (backlog 198). After a restart a vehicle
 that is not in service stays hidden until it moves, which is the rule anyway,
 so the restart does not flash ~150 parked vehicles onto the map.
+
+! OFF RAIL (0.2.4; Live Track Commuter Rail SSOT 7.10). Given an `on_rail`
+check, a train in service whose fix is not on any railway is held at its last
+fix that was, for at most REFUSED_HOLD_S, then hidden; one never seen on rail
+is not published. Nothing is moved or snapped: what is published is a real,
+older fix, and observed_at says how old. A held train is never `stalled`.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from datetime import datetime
 from typing import Any, Callable, Iterable
@@ -97,6 +104,13 @@ STALL_M = 300.0
 # intermediate stop, so it cannot say. 2 x 183 = 366.
 PLATFORM_HOLD_S = 366
 
+# A train in service whose fix is NOT ON RAIL (the caller's on_rail check) is
+# held at its last fix that was for at most this long, then hidden until a fix
+# is on rail again. A choice, not a measurement: MAX_SEGMENT_S's 600 s, the
+# longest gap still drawn as one segment. Unit 8426 (Metra UP-N 835) ran off
+# rail for hours on 2026-10-03/04; a position frozen that long is not a train.
+REFUSED_HOLD_S = 600
+
 
 def metres(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Great-circle distance in metres."""
@@ -124,12 +138,21 @@ class Fleet:
         max_segment_s: float = MAX_SEGMENT_S,
         stall_m: float = STALL_M,
         platform_hold_s: float = PLATFORM_HOLD_S,
+        on_rail: Callable[[float, float], bool] | None = None,
+        refused_hold_s: float = REFUSED_HOLD_S,
     ) -> None:
         self._styling = styling
         self._jitter_m, self._hold_s, self._rest_s = jitter_m, hold_s, rest_s
         self._grace_s, self._max_segment_s = grace_s, max_segment_s
         self._stall_m = stall_m
         self._platform_hold_s = platform_hold_s
+        # Is (lat, lon) on a railway? The caller's check over the rail it ships
+        # (saw_livetrack.rail.RailIndex). None: no check. Public, so it can be
+        # set once the rail data has loaded.
+        self.on_rail = on_rail
+        self._refused_hold_s = refused_hold_s
+        self._good: dict[str, Obs] = {}               # last in-service fix on rail
+        self._good_at: dict[str, float] = {}
         self._tracker = FixTracker(observed_at=_obs_time)
         self._fixed: set[str] = set()                 # seen by the tracker
         self._anchor: dict[str, tuple[float, float]] = {}
@@ -183,6 +206,8 @@ class Fleet:
                       self._first_seen):
             store.pop(vid, None)
         self._fixed.discard(vid)
+        self._good.pop(vid, None)
+        self._good_at.pop(vid, None)
         self._known.discard(vid)
         self._published.discard(vid)
 
@@ -206,6 +231,7 @@ class Fleet:
         seen: set[str] = set()
         trains: set[str] = set()
         non_revenue = 0
+        off_rail = 0
 
         for obs in observations:
             vid = obs.vehicle_id
@@ -215,6 +241,22 @@ class Fleet:
             self._known.add(vid)
             self._missing.pop(vid, None)
             self._first_seen.setdefault(vid, now)
+
+            # Off rail (Lee 2026-10-08; Live Track Commuter Rail SSOT 7.10).
+            # Checked for trains in service only: that is what was measured.
+            refused = False
+            if obs.in_service and self.on_rail is not None:
+                if self.on_rail(obs.lat, obs.lon):
+                    self._good[vid], self._good_at[vid] = obs, now
+                else:
+                    refused = True
+                    off_rail += 1
+                    good = self._good.get(vid)
+                    if good is None or now - self._good_at[vid] > self._refused_hold_s:
+                        trains.add(obs.train or vid)     # running, just not shown
+                        continue
+                    obs = dataclasses.replace(obs, lat=good.lat, lon=good.lon,
+                                              observed_at=good.observed_at)
 
             had_fix = vid in self._fixed
             advanced = self._tracker.update(
@@ -250,7 +292,8 @@ class Fleet:
             still_since = self._last_moved.get(vid, self._first_seen[vid])
             still_s = 0.0 if moving else now - still_since
             vehicles[vid] = self._record(obs, seg, moving, jumped, delays, next_stops, static,
-                                         still_s=still_s, trip_delays=trip_delays)
+                                         still_s=still_s, trip_delays=trip_delays,
+                                         refused=refused)
 
         departed: list[str] = []
         # Published before, still in the feed, now hidden: parked long enough.
@@ -275,13 +318,15 @@ class Fleet:
             "trains_in_service": len(trains),
             "non_revenue": non_revenue,
             "vehicles_in_feed": len(seen),
+            "off_rail": off_rail,
         }
 
     def _record(self, obs: Obs, seg: dict, moving: bool, jumped: bool,
                 delays: dict[str, int] | None,
                 next_stops: dict[str, tuple[str, float | None]] | None = None,
                 static: dict[str, Any] | None = None, *, still_s: float = 0.0,
-                trip_delays: dict[str, int] | None = None) -> dict[str, Any]:
+                trip_delays: dict[str, int] | None = None,
+                refused: bool = False) -> dict[str, Any]:
         vid = obs.vehicle_id
         if obs.in_service:
             label = obs.train or vid
@@ -350,7 +395,8 @@ class Fleet:
                 rec["delay_min"] = int(d / 60)
             # Standing too long for where it stands (backlog 275, D4c):
             # physics only; whether it is also late is the consumer's call.
-            if self._stalled(obs, static, still_s):
+            # A held (refused) train's standing is not known: never stalled.
+            if not refused and self._stalled(obs, static, still_s):
                 rec["stalled"] = True
         # Next station and when (schedule.py). Only in service, only when the
         # trip named its next stop; the time only when there is one

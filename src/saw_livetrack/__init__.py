@@ -21,6 +21,10 @@ Two submodules, deliberately separate:
                           saw_livetrack.gtfs` explicitly, and install the
                           `gtfs` extra for its decode().
 
+  saw_livetrack.rail      is this position on a railway? A grid index over
+                          rail lines the caller ships (0.2.4). NOT imported
+                          here; no dependencies.
+
 `amtraker` and `gtfs` import from `track`. Never the reverse.
 
 Not affiliated with Amtrak, VIA Rail Canada or Brightline.
@@ -56,4 +60,4 @@ from .amtraker import (  # noqa: F401
     speed_kmh,
 )
 
-__version__ = "0.2.3"
+__version__ = "0.2.4"
