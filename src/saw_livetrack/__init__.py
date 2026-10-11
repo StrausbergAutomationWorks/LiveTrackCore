@@ -25,6 +25,11 @@ Two submodules, deliberately separate:
                           rail lines the caller ships (0.2.4). NOT imported
                           here; no dependencies.
 
+  saw_livetrack.zones     the IANA time zone at any coordinate, and the
+                          local clock there (0.2.5). NOT imported here:
+                          install the `zones` extra (tzfpy). Data: Timezone
+                          Boundary Builder, ODbL v1.0.
+
 `amtraker` and `gtfs` import from `track`. Never the reverse.
 
 Not affiliated with Amtrak, VIA Rail Canada or Brightline.
@@ -60,4 +65,4 @@ from .amtraker import (  # noqa: F401
     speed_kmh,
 )
 
-__version__ = "0.2.4"
+__version__ = "0.2.5"

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "saw-livetrack"
-version = "0.2.4"
-description = "Shared code for the Live Track Home Assistant integrations: source-agnostic fix tracking, GTFS and GTFS-Realtime, and an Amtraker API client"
+version = "0.2.5"
+description = "Shared code for the Live Track Home Assistant integrations: source-agnostic fix tracking, GTFS and GTFS-Realtime, time zones from a coordinate, and an Amtraker API client"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
@@ -26,6 +26,10 @@ dependencies = []
 # next_stops publishes nothing, silently. Measured in a clean Windows venv
 # during the 0.2.0 release check: every Metra next stop missing until it was installed.
 gtfs = ["gtfs-realtime-bindings==1.0.0", "tzdata"]
+# saw_livetrack.zones (0.2.5): the IANA zone at any coordinate. tzfpy: MIT code, Rust,
+# no dependencies, wheels for musllinux x86_64 and aarch64; its embedded data is
+# Timezone Boundary Builder 2026d, ODbL v1.0. tzdata for the same reason as above.
+zones = ["tzfpy==2.1.0", "tzdata"]
 
 [project.urls]
 Homepage = "https://github.com/StrausbergAutomationWorks/LiveTrackCore"

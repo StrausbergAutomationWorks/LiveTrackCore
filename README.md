@@ -2,7 +2,7 @@
 
 Shared code for the **Live Track** Home Assistant integrations.
 
-Three submodules, deliberately separate.
+Separate submodules, deliberately.
 
 ## `saw_livetrack.track` — source-agnostic
 
@@ -84,10 +84,27 @@ No dependencies. The lines are the caller's: an integration ships them as data
 (Live Track Commuter Rail builds one file per railroad from the FRA North American
 Rail Network, public domain). `Fleet(on_rail=...)` takes such a check.
 
+## `saw_livetrack.zones` — the time zone at any coordinate
+
+`zone_at(lat, lon)` gives the IANA zone name (`"America/Chicago"`), anywhere on
+Earth; open sea gives a nautical zone (`"Etc/GMT+5"`). `local_time(when, lat, lon)`
+and `utc_offset_min(when, lat, lon)` give the local clock there for an aware
+datetime. Install the `zones` extra (`pip install saw-livetrack[zones]`): it brings
+[tzfpy](https://github.com/ringsaturn/tzfpy) and tzdata. Without tzfpy, `zone_at`
+raises `ImportError`. A feed's own stated zone is not trusted: Amtrak's GTFS puts
+Arizona on Denver time and the Mississippi Gulf Coast on New York time; the
+coordinate puts them right.
+
 ## Data attribution
 
 Train data is provided by **[Amtraker](https://amtraker.com)** and is licensed
 under the [Open Data Commons Attribution License (ODC-By) v1.0](https://opendatacommons.org/licenses/by/1-0/).
+
+Time-zone boundaries (`saw_livetrack.zones`) are from
+**[Timezone Boundary Builder](https://github.com/evansiroky/timezone-boundary-builder)**,
+embedded in tzfpy, and are licensed under the
+[Open Database License (ODbL) v1.0](https://opendatacommons.org/licenses/odbl/1-0/).
+`zones.DATA_VERSION()` names the release.
 
 ## Disclaimer
 
@@ -101,6 +118,7 @@ python tests/test_track.py
 python tests/test_amtraker.py
 python tests/test_shared_coordinator.py
 python -m unittest discover -s tests -p "test_gtfs_*.py"
+python -m unittest tests.test_zones
 ```
 
 The first three are scripts that exit non-zero on a failed check; run them
