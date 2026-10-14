@@ -84,6 +84,12 @@ check("Commuter -> Commuter Rail", dr.consumer_of("Commuter") == dr.COMMUTER)
 for cat in ("Cargo", "Locomotive", "Shunting", "On-track machines", "Test drive"):
     check("%s -> Freight Trains" % cat, dr.consumer_of(cat) == dr.FREIGHT)
 check("unknown category (train not listed) -> nobody", dr.consumer_of(None) is None)
+# Lee 2026-10-14 16:25: MV, empty-stock passenger trains, to Freight Trains
+check("MV (Long-distance in Digitraffic) -> Freight Trains", dr.consumer_of("Long-distance", "MV") == dr.FREIGHT)
+check("the other long-distance types stay Intercity",
+      all(dr.consumer_of("Long-distance", t) == dr.INTERCITY for t in ("IC", "S", "H", "HDM", "PYO", "V")))
+check("a type rule never claims an unlisted train", dr.consumer_of(None, "MV") is None)
+check("a type that is not a string is ignored", dr.consumer_of("Long-distance", ["MV"]) == dr.INTERCITY)
 
 # --- TrainTable: version merge, prune --------------------------------------
 tab = dr.TrainTable()
@@ -132,6 +138,10 @@ check("split: one long-distance, one commuter, one freight",
       [len(parts[c]) for c in dr.CONSUMERS] == [1, 1, 1])
 check("an unlisted train is drawn by nobody", sum(len(v) for v in parts.values()) == 3)
 check("freight keeps its operator", parts[dr.FREIGHT][0]["operator"] == "ferfi")
+tab3 = dr.TrainTable()
+tab3.update([train(10395, "Long-distance", "MV")])
+loc_mv = dict(locs[0]); loc_mv["key"] = ("10395", "2026-10-11")
+check("join routes an MV train to Freight Trains", dr.join([loc_mv], tab3)[0]["consumer"] == dr.FREIGHT)
 
 # --- transport: headers, gzip, errors (05_SHARED_LESSONS.md C5) ------------
 class Resp(io.BytesIO):

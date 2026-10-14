@@ -2,8 +2,8 @@
 
 Hoisted at birth, 2026-10-14 (Lee: "Hoist now"): three consumers read the one
 feed - Live Track Intercity Rail (VR long distance), Live Track Commuter Rail
-(HSL and VR local) and Live Track Freight Trains (cargo and every other
-non-passenger category). Pure Python: NO homeassistant imports
+(HSL and VR local) and Live Track Freight Trains (cargo, every other
+non-passenger category, and MV empty stock). Pure Python: NO homeassistant imports
 (05_SHARED_LESSONS.md B8.1a). One poller per Home Assistant through the
 shared-coordinator pattern (reference/shared_digitraffic_rail.py, B16).
 
@@ -48,6 +48,11 @@ CONSUMERS = (INTERCITY, COMMUTER, FREIGHT)
 # machines and test runs to Live Track Freight Trains - with cargo, every
 # category that is not a passenger train.
 PASSENGER_CATEGORIES = {"Long-distance": INTERCITY, "Commuter": COMMUTER}
+# Lee 2026-10-14 16:25: MV (matkustajaliikenteen tyhjavaunujuna, an empty-stock
+# passenger train) carries no passengers and goes to Freight Trains, although
+# Digitraffic files it under Long-distance. A type named here wins over its
+# category.
+TYPE_OWNERS = {"MV": FREIGHT}
 
 # Measured: a new fix at every 30 s poll (interval p50 30 s, p90 34 s).
 LOCATION_TTL_S = 30.0
@@ -66,14 +71,18 @@ class FeedUnavailable(DigitrafficError):
     """Transport, HTTP or decode failure. Distinct from an empty answer (C2)."""
 
 
-def consumer_of(category):
+def consumer_of(category, train_type=None):
     """The integration that owns a train of this `trainCategory`, or None.
+
+    A `trainType` in TYPE_OWNERS overrides the category (MV, empty stock).
 
     None only when the category is unknown (the train is not in the table
     yet): an unlisted train is drawn by nobody rather than guessed at.
     """
     if not category or not isinstance(category, str):
         return None
+    if isinstance(train_type, str) and train_type in TYPE_OWNERS:
+        return TYPE_OWNERS[train_type]
     return PASSENGER_CATEGORIES.get(category, FREIGHT)
 
 
@@ -272,7 +281,7 @@ def join(locations, table):
         info = describe(table.get(loc["key"]))
         rec = dict(loc)
         rec.update(info)
-        rec["consumer"] = consumer_of(info["category"])
+        rec["consumer"] = consumer_of(info["category"], info["train_type"])
         out.append(rec)
     return out
 

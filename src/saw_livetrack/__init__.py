@@ -33,7 +33,8 @@ Two submodules, deliberately separate:
   saw_livetrack.digitraffic_rail
                           Finland's trains from Fintraffic Digitraffic,
                           routed by category to the intercity, commuter and
-                          freight consumers. NOT imported here; no
+                          freight consumers (MV empty stock by type, to
+                          freight). NOT imported here; no
                           dependencies. Data: Fintraffic / digitraffic.fi,
                           CC BY 4.0.
 
