@@ -95,6 +95,18 @@ raises `ImportError`. A feed's own stated zone is not trusted: Amtrak's GTFS put
 Arizona on Denver time and the Mississippi Gulf Coast on New York time; the
 coordinate puts them right.
 
+## `saw_livetrack.digitraffic_rail` — Finland's trains (Fintraffic Digitraffic)
+
+One poller for every Live Track integration that draws Finnish trains. It joins
+`train-locations/latest` (every train with a fix, passenger or not) to the train
+list (`trains/<date>`, then `trains?version=` for only what changed), and routes
+each train to ONE consumer by `trainCategory`: `Long-distance` to `intercity`,
+`Commuter` to `commuter`, every other category (cargo, locomotives, shunting,
+track machines, test runs) to `freight`. `next_stop(train)` gives the next
+station, its ETA and the delay in whole minutes. Sends the `Accept-Encoding: gzip`
+Digitraffic requires and a `Digitraffic-User` header. No extra dependencies.
+Share one client per Home Assistant with `reference/shared_digitraffic_rail.py`.
+
 ## Data attribution
 
 Train data is provided by **[Amtraker](https://amtraker.com)** and is licensed
@@ -106,10 +118,14 @@ embedded in tzfpy, and are licensed under the
 [Open Database License (ODbL) v1.0](https://opendatacommons.org/licenses/odbl/1-0/).
 `zones.DATA_VERSION()` names the release.
 
+Finnish rail data (`saw_livetrack.digitraffic_rail`) is from **Fintraffic /
+[digitraffic.fi](https://www.digitraffic.fi/en/railway-traffic/)**, licensed under
+[Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/).
+
 ## Disclaimer
 
 Independent project. Not affiliated with, endorsed by or connected to Amtrak,
-VIA Rail Canada or Brightline.
+VIA Rail Canada, Brightline, VR or Fintraffic.
 
 ## Tests
 
@@ -117,11 +133,12 @@ VIA Rail Canada or Brightline.
 python tests/test_track.py
 python tests/test_amtraker.py
 python tests/test_shared_coordinator.py
+python tests/test_digitraffic_rail.py
 python -m unittest discover -s tests -p "test_gtfs_*.py"
 python -m unittest tests.test_zones
 ```
 
-The first three are scripts that exit non-zero on a failed check; run them
+The first four are scripts that exit non-zero on a failed check; run them
 directly, not through `unittest discover`.
 
 ## Licence

@@ -30,9 +30,16 @@ Two submodules, deliberately separate:
                           install the `zones` extra (tzfpy). Data: Timezone
                           Boundary Builder, ODbL v1.0.
 
+  saw_livetrack.digitraffic_rail
+                          Finland's trains from Fintraffic Digitraffic,
+                          routed by category to the intercity, commuter and
+                          freight consumers. NOT imported here; no
+                          dependencies. Data: Fintraffic / digitraffic.fi,
+                          CC BY 4.0.
+
 `amtraker` and `gtfs` import from `track`. Never the reverse.
 
-Not affiliated with Amtrak, VIA Rail Canada or Brightline.
+Not affiliated with Amtrak, VIA Rail Canada, Brightline, VR or Fintraffic.
 """
 
 from .track import (  # noqa: F401
