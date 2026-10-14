@@ -102,7 +102,9 @@ One poller for every Live Track integration that draws Finnish trains. It joins
 list (`trains/<date>`, then `trains?version=` for only what changed), and routes
 each train to ONE consumer by `trainCategory`: `Long-distance` to `intercity`,
 `Commuter` to `commuter`, every other category (cargo, locomotives, shunting,
-track machines, test runs) to `freight`. `next_stop(train)` gives the next
+track machines, test runs) to `freight`. One train TYPE overrides its category:
+`MV`, empty passenger stock, which Digitraffic files under `Long-distance`,
+goes to `freight` (it carries no passengers). `next_stop(train)` gives the next
 station, its ETA and the delay in whole minutes. Sends the `Accept-Encoding: gzip`
 Digitraffic requires and a `Digitraffic-User` header. No extra dependencies.
 Share one client per Home Assistant with `reference/shared_digitraffic_rail.py`.
