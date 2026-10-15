@@ -87,7 +87,7 @@ check("unknown category (train not listed) -> nobody", dr.consumer_of(None) is N
 # Lee 2026-10-14 16:25: MV, empty-stock passenger trains, to Freight Trains
 check("MV (Long-distance in Digitraffic) -> Freight Trains", dr.consumer_of("Long-distance", "MV") == dr.FREIGHT)
 check("the other long-distance types stay Intercity",
-      all(dr.consumer_of("Long-distance", t) == dr.INTERCITY for t in ("IC", "S", "H", "HDM", "PYO", "V")))
+      all(dr.consumer_of("Long-distance", t) == dr.INTERCITY for t in ("IC", "S", "H", "HDM", "PYO")))
 check("a type rule never claims an unlisted train", dr.consumer_of(None, "MV") is None)
 check("a type that is not a string is ignored", dr.consumer_of("Long-distance", ["MV"]) == dr.INTERCITY)
 
@@ -229,28 +229,196 @@ try:
 except ValueError:
     check("an unknown consumer name is refused", True)
 
-# --- shared registration (B8.1a, B16) ----------------------------------------
+# --- 0.2.7: each consumer registers what it draws ----------------------------
+# Measured 2026-10-14 (bin\vr_mem.py): a client keeping every category held
+# about 138 MB. Now it keeps only the registered consumers' trains.
+NOW2 = [_dt.datetime(2026, 10, 11, 22, 30, tzinfo=UTC)]
+CALLS2 = []
+
+
+def answers2(path):
+    CALLS2.append(path)
+    if path.startswith("trains/"):
+        d = path.split("/")[1]
+        if d != "2026-10-11":
+            return []
+        return [train(1, "Long-distance", "S", version=200), train(3, "Commuter", "HL", line="R", version=200),
+                train(50000, "Cargo", "T", version=200), train(10395, "Long-distance", "MV", version=200),
+                train(12980, "Long-distance", "V", version=200)]
+    if path.startswith("trains?version="):
+        # Train 1 becomes a cargo run (a category change); a new cargo train.
+        return [train(1, "Cargo", "T", version=205), train(50001, "Cargo", "T", version=206)]
+    if path == "train-locations/latest":
+        return LOCS
+    return []
+
+
+cl2 = dr.DigitrafficRailClient(user="u", opener=opener_for(answers2), clock=lambda: NOW2[0],
+                               consumers=(dr.INTERCITY,))
+check("a client registered for one consumer says so", cl2.consumers == frozenset({dr.INTERCITY}))
+cl2.snapshot()
+keys = set(cl2.table.trains)
+check("only the registered consumer's trains are kept", keys == {("1", "2026-10-11")})
+check("V (varikkojuna, depot train; Lee 2026-10-14) is not kept for intercity", ("12980", "2026-10-11") not in keys)
+check("MV is not kept for intercity", ("10395", "2026-10-11") not in keys)
+try:
+    cl2.for_consumer(dr.FREIGHT)
+    check("an unregistered consumer is refused", False)
+except ValueError:
+    check("for_consumer refuses a consumer not registered", True)
+check("register returns True for a newcomer", cl2.register(dr.FREIGHT) is True)
+check("register is idempotent", cl2.register(dr.FREIGHT) is False)
+n = len(CALLS2)
+cl2.snapshot()
+check("a consumer joining a loaded client reloads the day lists once",
+      [p for p in CALLS2[n:] if p.startswith("trains/")] == ["trains/2026-10-10", "trains/2026-10-11", "trains/2026-10-12"])
+check("after the reload the newcomer's trains are there, V and MV with them",
+      {("50000", "2026-10-11"), ("10395", "2026-10-11"), ("12980", "2026-10-11")} <= set(cl2.table.trains))
+check("the commuter train is still not kept", ("3", "2026-10-11") not in cl2.table.trains)
+n = len(CALLS2)
+cl2.snapshot()
+check("the reload happens once, then the TTL holds", len(CALLS2) == n)
+check("unregister returns True", cl2.unregister(dr.FREIGHT) is True)
+cl2.snapshot()
+check("a consumer leaving takes its trains at the next refresh, without a request",
+      set(cl2.table.trains) == {("1", "2026-10-11")} and len(CALLS2) == n)
+check("unregister is idempotent", cl2.unregister(dr.FREIGHT) is False)
+NOW2[0] += _dt.timedelta(seconds=61)
+cl2.snapshot()
+check("a train whose category changes to one nobody wants is dropped", ("1", "2026-10-11") not in cl2.table.trains)
+check("an unwanted train still advances the version, so ?version= moves on", cl2.table.version == 206)
+recs2 = dr.join(dr.parse_locations(LOCS), cl2.table)
+check("join carries each record's train", all("train" in r for r in recs2))
+tabj = dr.TrainTable(); tabj.update([train(1, "Long-distance", "S")])
+check("the record's train is the table's own", dr.join(locs, tabj)[0]["train"] is tabj.get(("1", "2026-10-11")))
+for bad in ("ships", None):
+    try:
+        cl2.register(bad)
+        check("register refuses %r" % (bad,), False)
+    except ValueError:
+        check("register refuses an unknown consumer %r" % (bad,), True)
+try:
+    dr.DigitrafficRailClient(user="u", consumers=("ships",))
+    check("unknown consumer at construction refused", False)
+except ValueError:
+    check("an unknown consumer at construction is refused", True)
+check("a standalone client keeps every consumer by default",
+      dr.DigitrafficRailClient(user="u").consumers == frozenset(dr.CONSUMERS))
+
+# --- 0.2.7: the guard. One fetch at a time; register never waits on it ------
+import threading  # noqa: E402
+import time as _time  # noqa: E402
+
+GATE = threading.Event()
+CALLS3 = []
+
+
+def slow(path):
+    CALLS3.append(path)
+    GATE.wait(5)
+    return answers2(path) if not path.startswith("trains?") else []
+
+
+cl3 = dr.DigitrafficRailClient(user="u", opener=opener_for(slow), clock=lambda: NOW2[0],
+                               consumers=(dr.INTERCITY, dr.COMMUTER))
+out3 = {}
+t_a = threading.Thread(target=lambda: out3.setdefault("a", cl3.for_consumer(dr.INTERCITY)))
+t_b = threading.Thread(target=lambda: out3.setdefault("b", cl3.for_consumer(dr.COMMUTER)))
+t_a.start(); _time.sleep(0.1); t_b.start(); _time.sleep(0.1)
+t0 = _time.monotonic()
+cl3.register(dr.FREIGHT)
+cl3.unregister(dr.FREIGHT)
+waited = _time.monotonic() - t0
+GATE.set()
+t_a.join(10); t_b.join(10)
+check("register and unregister do not wait for a fetch in progress (event loop)", waited < 0.05)
+check("two consumers asking at once cost ONE set of requests (3 dates + positions)",
+      sorted(CALLS3) == sorted(["trains/2026-10-10", "trains/2026-10-11", "trains/2026-10-12", "train-locations/latest"]))
+check("both got their trains", len(out3.get("a", [])) == 1 and len(out3.get("b", [])) == 1)
+
+GATE4 = threading.Event()
+CALLS4 = []
+
+
+def slow4(path):
+    CALLS4.append(path)
+    if path == "trains/2026-10-10":
+        GATE4.wait(5)
+    return answers2(path) if not path.startswith("trains?") else []
+
+
+cl4 = dr.DigitrafficRailClient(user="u", opener=opener_for(slow4), clock=lambda: NOW2[0],
+                               consumers=(dr.INTERCITY,))
+t4 = threading.Thread(target=cl4.snapshot)
+t4.start(); _time.sleep(0.1)
+cl4.register(dr.COMMUTER)          # during the FIRST load
+GATE4.set(); t4.join(10)
+check("a consumer registered during the first load is not in it", ("3", "2026-10-11") not in cl4.table.trains)
+n4 = len(CALLS4)
+cl4.snapshot()
+check("...and the next refresh loads it, inside the TTL",
+      ("3", "2026-10-11") in cl4.table.trains
+      and [p for p in CALLS4[n4:] if p.startswith("trains/")] == ["trains/2026-10-10", "trains/2026-10-11", "trains/2026-10-12"])
+
+check("V -> Freight Trains (Lee 2026-10-14 21:55)", dr.consumer_of("Long-distance", "V") == dr.FREIGHT)
+
+# --- shared registration (B8.1a, B16), 0.2.7 --------------------------------
 class FakeHass:
     def __init__(self):
         self.data = {}
 
 
 h = FakeHass()
-a, b, c = (sdr.get_shared_rail_client(h, "u") for _ in range(3))
-check("three integrations receive ONE rail client", a is b is c)
-check("refcount 3", h.data[dr.SHARED_KEY]["refcount"] == 3)
-check("the shared key is SAW-neutral and versioned", dr.SHARED_KEY == "saw_digitraffic_rail_v1")
-for _ in range(3):
-    sdr.release_shared_rail_client(h)
+a = sdr.get_shared_rail_client(h, dr.INTERCITY)
+check("the first integration creates the client with ITS consumer only", a.consumers == frozenset({dr.INTERCITY}))
+check("with the client's own Digitraffic-User (Lee 2026-10-14 21:10)", a.user == dr.DEFAULT_USER)
+b = sdr.get_shared_rail_client(h, dr.COMMUTER)
+c = sdr.get_shared_rail_client(h, dr.COMMUTER)
+check("three claims, ONE rail client", a is b is c)
+check("the second integration snaps in with what it draws",
+      a.consumers == frozenset({dr.INTERCITY, dr.COMMUTER}))
+check("refcount 3, counted per consumer",
+      h.data[dr.SHARED_KEY]["refcount"] == 3 and h.data[dr.SHARED_KEY]["consumers"] == {dr.INTERCITY: 1, dr.COMMUTER: 2})
+check("the shared key is SAW-neutral and versioned (contract 2 in 0.2.7)", dr.SHARED_KEY == "saw_digitraffic_rail_v2")
+sdr.release_shared_rail_client(h, dr.COMMUTER)
+check("one of two commuter claims released: commuter stays", dr.COMMUTER in a.consumers)
+sdr.release_shared_rail_client(h, dr.FREIGHT)
+check("releasing a consumer never claimed changes nothing", h.data[dr.SHARED_KEY]["refcount"] == 2)
+sdr.release_shared_rail_client(h, dr.COMMUTER)
+check("its last claim unregisters it", a.consumers == frozenset({dr.INTERCITY}))
+sdr.release_shared_rail_client(h, dr.INTERCITY)
 check("entry removed with the last release", dr.SHARED_KEY not in h.data)
+try:
+    sdr.get_shared_rail_client(FakeHass(), "ships")
+    check("unknown consumer refused by the reference", False)
+except ValueError:
+    check("an unknown consumer is refused before anything is stored", True)
 h2 = FakeHass()
-foreign = {"contract_version": 99, "entry_shape": 1, "client": dr.DigitrafficRailClient(user="u"), "refcount": 1}
+foreign = {"contract_version": 99, "entry_shape": 2, "client": dr.DigitrafficRailClient(user="u"), "refcount": 1,
+           "consumers": {}}
 h2.data[dr.SHARED_KEY] = foreign
-check("a foreign contract version -> a PRIVATE client", sdr.get_shared_rail_client(h2, "u") is not foreign["client"])
+priv = sdr.get_shared_rail_client(h2, dr.INTERCITY)
+check("a foreign contract version -> a PRIVATE client, its own consumer only",
+      priv is not foreign["client"] and priv.consumers == frozenset({dr.INTERCITY}))
 check("the foreign entry is not overwritten", h2.data[dr.SHARED_KEY] is foreign)
+old_shape = {"contract_version": dr.CONTRACT_VERSION, "entry_shape": 1, "client": dr.DigitrafficRailClient(user="u"),
+             "refcount": 1}
+h4 = FakeHass(); h4.data[dr.SHARED_KEY] = old_shape
+check("an entry of the old shape -> a private client, entry untouched",
+      sdr.get_shared_rail_client(h4, dr.INTERCITY) is not old_shape["client"] and h4.data[dr.SHARED_KEY] is old_shape)
+shape1 = {"contract_version": dr.CONTRACT_VERSION, "entry_shape": 1, "client": dr.DigitrafficRailClient(user="u"),
+          "refcount": 1, "consumers": {dr.INTERCITY: 1}}
+h6 = FakeHass(); h6.data[dr.SHARED_KEY] = shape1
+check("an entry of shape 1 WITH consumer counts is still foreign",
+      sdr.get_shared_rail_client(h6, dr.INTERCITY) is not shape1["client"] and shape1["refcount"] == 1)
+no_counts = {"contract_version": dr.CONTRACT_VERSION, "entry_shape": 2, "client": dr.DigitrafficRailClient(user="u"),
+             "refcount": 1}
+h5 = FakeHass(); h5.data[dr.SHARED_KEY] = no_counts
+check("an entry with no consumer counts -> a private client, entry untouched",
+      sdr.get_shared_rail_client(h5, dr.INTERCITY) is not no_counts["client"] and h5.data[dr.SHARED_KEY] is no_counts)
 h3 = FakeHass(); h3.data[dr.SHARED_KEY] = "junk"
 check("garbage at the key -> private client, garbage untouched",
-      isinstance(sdr.get_shared_rail_client(h3, "u"), dr.DigitrafficRailClient) and h3.data[dr.SHARED_KEY] == "junk")
+      isinstance(sdr.get_shared_rail_client(h3, dr.INTERCITY), dr.DigitrafficRailClient) and h3.data[dr.SHARED_KEY] == "junk")
 
 failed = [n for n, ok in CHECKS if not ok]
 print("checks: %d   passed: %d   failed: %d" % (len(CHECKS), len(CHECKS) - len(failed), len(failed)))

@@ -104,10 +104,16 @@ each train to ONE consumer by `trainCategory`: `Long-distance` to `intercity`,
 `Commuter` to `commuter`, every other category (cargo, locomotives, shunting,
 track machines, test runs) to `freight`. One train TYPE overrides its category:
 `MV`, empty passenger stock, which Digitraffic files under `Long-distance`,
-goes to `freight` (it carries no passengers). `next_stop(train)` gives the next
+goes to `freight` (it carries no passengers), and so does `V`, a depot or yard
+train (varikkojuna). `next_stop(train)` gives the next
 station, its ETA and the delay in whole minutes. Sends the `Accept-Encoding: gzip`
 Digitraffic requires and a `Digitraffic-User` header. No extra dependencies.
-Share one client per Home Assistant with `reference/shared_digitraffic_rail.py`.
+Share one client per Home Assistant with `reference/shared_digitraffic_rail.py`:
+each integration registers the consumer it draws, and the client keeps
+timetables only for registered consumers, so an integration installed alone
+costs only its own trains (0.2.7). Every fetch and table change is under one
+lock; `register()` and `unregister()` never wait on it. Each joined record
+carries its `train`.
 
 ## Data attribution
 

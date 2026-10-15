@@ -26,12 +26,15 @@ from __future__ import annotations
 import datetime as _dt
 import gzip
 import json
+import threading
 import urllib.error
 import urllib.request
 
 # Stamped into the shared hass.data key (B8.1a): a consumer that finds an entry
 # at a version it does not understand builds its own client instead.
-CONTRACT_VERSION = 1
+# 2 (0.2.7): consumers register with the client, which keeps only their
+# trains; the shared entry counts registrations per consumer.
+CONTRACT_VERSION = 2
 SHARED_KEY = "saw_digitraffic_rail_v%d" % CONTRACT_VERSION
 
 BASE = "https://rata.digitraffic.fi/api/v1"
@@ -52,7 +55,9 @@ PASSENGER_CATEGORIES = {"Long-distance": INTERCITY, "Commuter": COMMUTER}
 # passenger train) carries no passengers and goes to Freight Trains, although
 # Digitraffic files it under Long-distance. A type named here wins over its
 # category.
-TYPE_OWNERS = {"MV": FREIGHT}
+# Lee 2026-10-14 21:55: V, a varikkojuna (depot or yard train, a non-commercial
+# move of rolling stock), also Long-distance in Digitraffic, to Freight Trains.
+TYPE_OWNERS = {"MV": FREIGHT, "V": FREIGHT}
 
 # Measured: a new fix at every 30 s poll (interval p50 30 s, p90 34 s).
 LOCATION_TTL_S = 30.0
@@ -69,6 +74,11 @@ class RateLimited(DigitrafficError):
 
 class FeedUnavailable(DigitrafficError):
     """Transport, HTTP or decode failure. Distinct from an empty answer (C2)."""
+
+
+def _check_consumer(consumer):
+    if consumer not in CONSUMERS:
+        raise ValueError("unknown consumer %r" % (consumer,))
 
 
 def consumer_of(category, train_type=None):
@@ -195,7 +205,11 @@ class TrainTable:
         self.trains = {}
         self.version = 0
 
-    def update(self, payload):
+    def update(self, payload, keep=None):
+        """Merge trains in. keep(train) -> bool: a train it rejects is not
+        stored, and a stored one it now rejects (its category or type changed
+        to a consumer nobody registered) is dropped. The table's version
+        still advances past it, so ?version= never asks for it again."""
         changed = 0
         if not isinstance(payload, list):
             return changed
@@ -208,11 +222,22 @@ class TrainTable:
             ver = t.get("version") if isinstance(t.get("version"), int) else 0
             key = (str(number), str(date))
             old = self.trains.get(key)
+            self.version = max(self.version, ver)
+            if keep is not None and not keep(t):
+                if old is not None and ver >= (old.get("version") or 0):
+                    del self.trains[key]
+                continue
             if old is None or ver >= (old.get("version") or 0):
                 self.trains[key] = t
                 changed += 1
-            self.version = max(self.version, ver)
         return changed
+
+    def drop(self, keep):
+        """Remove every stored train keep() rejects; how many went."""
+        gone = [k for k, t in self.trains.items() if not keep(t)]
+        for k in gone:
+            del self.trains[k]
+        return len(gone)
 
     def prune(self, today, keep_days=1):
         """Drop trains whose departure date is before today - keep_days.
@@ -275,12 +300,17 @@ def join(locations, table):
     """Each position with what its train is and who owns it.
 
     `consumer` is None for a train not (yet) in the table: nobody draws it.
+    `train` is the table's own record (timetable included), or None, so a
+    consumer never has to read the table itself while another thread
+    refreshes it.
     """
     out = []
     for loc in locations:
-        info = describe(table.get(loc["key"]))
+        t = table.get(loc["key"])
+        info = describe(t)
         rec = dict(loc)
         rec.update(info)
+        rec["train"] = t
         rec["consumer"] = consumer_of(info["category"], info["train_type"])
         out.append(rec)
     return out
@@ -302,6 +332,21 @@ def split(records):
 class DigitrafficRailClient:
     """Polls Digitraffic rail ONCE for every consumer (B16: budget the IP).
 
+    KEEPS ONLY WHAT IS REGISTERED (0.2.7). `consumers` are the consumers this
+    client serves (default: all three, for a standalone client); the shared
+    registration (reference/shared_digitraffic_rail.py) starts with the first
+    integration's and register()s each that joins. The table stores only the
+    registered consumers' trains: measured 2026-10-14, a client keeping
+    every category held about 138 MB. A consumer joining a loaded client
+    makes the next refresh load the day lists again, for its trains; one
+    leaving has its trains dropped at the next refresh.
+
+    THE GUARD (0.2.7). One lock covers every fetch and every table change, so
+    consumers on different executor threads make one set of requests between
+    them and never see a half-merged table. register() and unregister() take
+    only a small state lock, never held across a request: they are called
+    on Home Assistant's event loop and must not wait for a fetch.
+
     First table load asks for the dates around now (departureDate is the
     Finnish date, up to three hours ahead of UTC); after that `?version=`
     returns only what changed. Positions are cached for LOCATION_TTL_S, the
@@ -310,7 +355,8 @@ class DigitrafficRailClient:
     """
 
     def __init__(self, user=DEFAULT_USER, timeout=30, opener=None, clock=None,
-                 location_ttl_s=LOCATION_TTL_S, table_ttl_s=TABLE_TTL_S):
+                 location_ttl_s=LOCATION_TTL_S, table_ttl_s=TABLE_TTL_S,
+                 consumers=CONSUMERS):
         if not user or not str(user).strip():
             raise ValueError("a non-empty Digitraffic-User is required")
         self.user = user
@@ -324,6 +370,46 @@ class DigitrafficRailClient:
         self._locations_at = None
         self._table_at = None
         self.fetch_count = 0
+        for c in consumers:
+            _check_consumer(c)
+        # Fetches and the table. Held across requests.
+        self._lock = threading.RLock()
+        # What is wanted and what the next refresh must do. Never held across
+        # a request (register/unregister run on the event loop).
+        self._state = threading.Lock()
+        self._wanted = set(consumers)
+        self._reload = False
+        self._prune = False
+        self._loaded = False
+
+    @property
+    def consumers(self):
+        """The consumers this client keeps trains for."""
+        with self._state:
+            return frozenset(self._wanted)
+
+    def register(self, consumer):
+        """Keep `consumer`'s trains from now on. True if it is new. Never waits
+        for a fetch: a newcomer to a loaded table is loaded at the next refresh."""
+        _check_consumer(consumer)
+        with self._state:
+            if consumer in self._wanted:
+                return False
+            self._wanted.add(consumer)
+            if self._loaded:
+                self._reload = True
+            return True
+
+    def unregister(self, consumer):
+        """Stop keeping `consumer`'s trains; they go at the next refresh. True if
+        it was registered. Never waits for a fetch."""
+        _check_consumer(consumer)
+        with self._state:
+            if consumer not in self._wanted:
+                return False
+            self._wanted.discard(consumer)
+            self._prune = True
+            return True
 
     def _get(self, path):
         self.fetch_count += 1
@@ -333,32 +419,50 @@ class DigitrafficRailClient:
         return at is not None and (self._clock() - at).total_seconds() < ttl
 
     def locations(self, force=False):
-        if force or not self._fresh(self._locations_at, self.location_ttl_s):
-            self._locations = parse_locations(self._get("train-locations/latest"))
-            self._locations_at = self._clock()
-        return self._locations
+        with self._lock:
+            if force or not self._fresh(self._locations_at, self.location_ttl_s):
+                self._locations = parse_locations(self._get("train-locations/latest"))
+                self._locations_at = self._clock()
+            return self._locations
 
     def refresh_table(self, force=False):
-        if not force and self._fresh(self._table_at, self.table_ttl_s):
-            return 0
-        now = self._clock()
-        changed = 0
-        if self.table.version == 0:
-            day = now.date()
-            for d in (day - _dt.timedelta(days=1), day, day + _dt.timedelta(days=1)):
-                changed += self.table.update(self._get("trains/%s" % d.isoformat()))
-        else:
-            changed += self.table.update(self._get("trains?version=%d" % self.table.version))
-        self.table.prune(now.date())
-        self._table_at = now
-        return changed
+        with self._lock:
+            with self._state:
+                wanted = frozenset(self._wanted)
+                reload, prune = self._reload, self._prune
+                self._prune = False
+
+            def keep(t):
+                return consumer_of(t.get("trainCategory"), t.get("trainType")) in wanted
+
+            if prune:
+                self.table.drop(keep)
+            if not force and not reload and self._fresh(self._table_at, self.table_ttl_s):
+                return 0
+            now = self._clock()
+            changed = 0
+            if self.table.version == 0 or reload:
+                day = now.date()
+                for d in (day - _dt.timedelta(days=1), day, day + _dt.timedelta(days=1)):
+                    changed += self.table.update(self._get("trains/%s" % d.isoformat()), keep)
+                with self._state:
+                    self._loaded = True
+                    # A consumer that registered DURING this load is not in it.
+                    self._reload = not self._wanted <= wanted
+            else:
+                changed += self.table.update(self._get("trains?version=%d" % self.table.version), keep)
+            self.table.prune(now.date())
+            self._table_at = now
+            return changed
 
     def snapshot(self, force=False):
         """{consumer: [records]} - every train with a fix, routed to its owner."""
-        self.refresh_table(force=force)
-        return split(join(self.locations(force=force), self.table))
+        with self._lock:
+            self.refresh_table(force=force)
+            return split(join(self.locations(force=force), self.table))
 
     def for_consumer(self, consumer, force=False):
-        if consumer not in CONSUMERS:
-            raise ValueError("unknown consumer %r" % (consumer,))
+        _check_consumer(consumer)
+        if consumer not in self.consumers:
+            raise ValueError("consumer %r is not registered with this client" % (consumer,))
         return self.snapshot(force=force)[consumer]
