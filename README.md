@@ -115,6 +115,20 @@ costs only its own trains (0.2.7). Every fetch and table change is under one
 lock; `register()` and `unregister()` never wait on it. Each joined record
 carries its `train`.
 
+## `saw_livetrack.map_card` - one map card, many integrations
+
+Every Live Track integration ships the released
+[Live Track Map Card](https://github.com/StrausbergAutomationWorks/LiveTrackMapCard),
+serves it and offers it; the instance loads the highest version, from exactly
+one dashboard resource row. This module decides: it reads the version stamped
+on the bundle's first line, orders versions by SemVer precedence (build
+metadata ignored, ties keep what is registered), builds and parses the
+resource URL (`?v=` percent-encoded), and plans the change to the row. It never
+touches a row under `/hacsfiles/`, and it updates rows in place rather than
+adding them. No dependencies, no Home Assistant import. Each integration
+copies `reference/shared_map_card.py` verbatim for the Home Assistant calls
+(0.2.8).
+
 ## Data attribution
 
 Train data is provided by **[Amtraker](https://amtraker.com)** and is licensed
@@ -142,6 +156,8 @@ python tests/test_track.py
 python tests/test_amtraker.py
 python tests/test_shared_coordinator.py
 python tests/test_digitraffic_rail.py
+python tests/test_map_card.py
+python tests/test_shared_map_card.py
 python -m unittest discover -s tests -p "test_gtfs_*.py"
 python -m unittest tests.test_zones
 ```
