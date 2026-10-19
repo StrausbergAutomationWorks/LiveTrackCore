@@ -103,6 +103,11 @@ RETURN_MIN_M = 200.0
 RETURN_ACCEPT = 3
 # A trip not seen for this long is forgotten (its return history).
 FORGET_S = 1800.0
+# A WHOLE NETWORK missing from one batch (MEASURED 2026-10-19, bin\\es_renfe_gap_probe.txt:
+# 2 of 8 batches carried no Madrid train, 94 vehicles against about 150 either side, and
+# the batch was the NEWER one): its last positions and trip updates are served again for
+# up to this long after it was last seen. Three batches.
+NETWORK_HOLD_S = 60.0
 
 _TRIP_RE = re.compile(r"^(\d\d)\d\d[A-Z](\d+)([A-Za-z][A-Za-z0-9]*)$")
 _SPECIAL_RE = re.compile(r"^SPECIAL_\d+_(\d+)([A-Za-z][A-Za-z0-9]*)$")
@@ -292,6 +297,11 @@ class RenfeClient:
     train); if that attempt fails, every trip is taken as rail until a later one
     succeeds (STATIC_RETRY_S). The zip is kept (static_zip()) so a consumer that
     distills it does not download it again.
+
+    A NETWORK MISSING FROM A BATCH as a whole (Renfe leaves one out of about one batch
+    in four) is served from the batch it was last in, for up to NETWORK_HOLD_S:
+    positions (with their own, older fix times) and trip updates both. One trip missing
+    alone is not held; that is each consumer's own grace (0.2.10).
     """
 
     def __init__(self, user=DEFAULT_USER, timeout=30, opener=None, clock=None,
@@ -325,6 +335,8 @@ class RenfeClient:
         self.held_returns = 0
         self.dropped_null = 0
         self.dropped_duplicate = 0
+        self.held_networks = 0
+        self._by_network = {}        # network -> [seen at, rows, {trip: trip update}]
 
     @property
     def consumers(self):
@@ -458,6 +470,38 @@ class RenfeClient:
         h[0], h[1], h[2] = last, pos, 0
         return None
 
+    def _hold_networks(self, cleaned, tu, now):
+        """(`cleaned` plus the last rows of every network absent from this batch as a
+        whole and seen within NETWORK_HOLD_S, those networks' last trip updates that
+        `tu` lacks). Networks present are remembered from this batch."""
+        present = {}
+        for row in cleaned:
+            present.setdefault(parse_trip_id(row[1])[0], []).append(row)
+        tus = {}
+        if tu is not None:
+            for ent in tu.entity:
+                if ent.HasField("trip_update"):
+                    tid = ent.trip_update.trip.trip_id.strip()
+                    tus.setdefault(parse_trip_id(tid)[0], {})[tid] = ent
+        rows, extra = list(cleaned), []
+        for net, (seen, old_rows, old_tu) in list(self._by_network.items()):
+            if net in present:
+                continue
+            if now - seen > NETWORK_HOLD_S:
+                del self._by_network[net]
+                continue
+            self.held_networks += 1
+            rows.extend(old_rows)
+            have = tus.get(net, {})
+            extra.extend(e for t, e in old_tu.items() if t not in have)
+        for net, net_rows in present.items():
+            if tu is not None:
+                net_tu = tus.get(net, {})
+            else:
+                net_tu = self._by_network[net][2] if net in self._by_network else {}
+            self._by_network[net] = [now, net_rows, net_tu]
+        return rows, extra
+
     def _classify(self, trip_id, index):
         network, _, line = parse_trip_id(trip_id)
         rt = index.route_type(trip_id) if index is not None else None
@@ -487,7 +531,7 @@ class RenfeClient:
                    for c in wanted}
             # The returns are tracked even while waiting, so the first published fix
             # already has its history.
-            cleaned = self._clean(vp, now)
+            cleaned, tu_extra = self._hold_networks(self._clean(vp, now), tu, now)
             if not waiting:
                 owner = {}
                 for ent, tid, held in cleaned:
@@ -501,7 +545,7 @@ class RenfeClient:
                         e.vehicle.position.latitude = held[0]
                         e.vehicle.position.longitude = held[1]
                 if tu is not None:
-                    for ent in tu.entity:
+                    for ent in list(tu.entity) + tu_extra:
                         if not ent.HasField("trip_update"):
                             continue
                         tid = ent.trip_update.trip.trip_id.strip()
@@ -533,4 +577,5 @@ class RenfeClient:
                 "fetch_count": self.fetch_count, "held_returns": self.held_returns,
                 "dropped_null": self.dropped_null,
                 "dropped_duplicate": self.dropped_duplicate,
+                "held_networks": self.held_networks,
                 "trips_tracked": len(self._history)}

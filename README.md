@@ -134,7 +134,9 @@ a train, and `static_zip()` hands the same bytes to a consumer that distills the
 `parse_trip_id()` reads the network, train number and line out of a trip id. Needs
 the `gtfs` extra. Share one client per Home Assistant with
 `reference/shared_renfe.py`; each integration registers the consumer it draws
-(0.2.9).
+(0.2.9). Renfe leaves a whole network out of about one batch in four; such a
+network is served from the batch it was last in for up to a minute, positions
+and trip updates both (0.2.10).
 
 ## `saw_livetrack.map_card` - one map card, many integrations
 

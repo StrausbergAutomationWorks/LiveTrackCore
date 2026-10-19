@@ -390,7 +390,8 @@ net6.vp = vp_feed([("VP_C2-1", "1090L00002C2", 41.0, -3.0, 1)])
 c6.snapshot(force=True)
 check("a trip not seen for FORGET_S is forgotten", "1090L19830C1" not in c6._history)
 check("stats keys", set(c6.stats()) == {"index_trips", "index_day", "timetable", "fetch_count", "held_returns",
-                                         "dropped_null", "dropped_duplicate", "trips_tracked"})
+                                         "dropped_null", "dropped_duplicate", "held_networks",
+                                         "trips_tracked"})
 
 # --- the timetable in the background (measured: 36 s to download) --------------------
 import threading  # noqa: E402
@@ -440,6 +441,72 @@ sf = cf.snapshot(force=True)
 check("background timetable failed: every trip taken as rail", "4190L84931C2" in trips(sf["commuter"][0]))
 check("background timetable failed: stats say so", cf.stats()["timetable"] == "failed: every trip taken as rail")
 check("a default client loads in the background", rf.RenfeClient()._background is True)
+
+# --- a network missing from one batch (0.2.10) ----------------------------------------
+NROWS = [
+    ("VP_C5-23743", "1090L23743C5", 40.30, -3.80, 1792309998),   # Madrid
+    ("VP_C5-23745", "1090L23745C5", 40.31, -3.81, 1792309998),   # Madrid
+    ("VP_C1-26912", "6190L35912C1", 43.28, -1.96, 1792309998),   # San Sebastian
+    ("VP_C2-84931", "4190L84931C2", 37.60, -1.70, 1792309998),   # a bus
+]
+GAP = {"vp": vp_feed(NROWS),
+       "tu": tu_feed(["1090L23743C5", "1090L23745C5", "6190L35912C1", "4190L84931C2"])}
+gnet = Net(lambda: GAP["vp"], lambda: GAP["tu"], static_zip())
+T0 = 1792310000.0
+gclock = Clock(T0)
+g = rf.RenfeClient(background=False, opener=gnet, clock=gclock, today=TODAY)
+g.snapshot()
+check("no network missing: nothing held", g.stats()["held_networks"] == 0)
+SS2 = ("VP_C1-26912", "6190L35912C1", 43.29, -1.95, 1792310018)
+GAP["vp"] = vp_feed([SS2, NROWS[3]], ts=1792310020)            # no Madrid train at all
+GAP["tu"] = tu_feed(["1090L23745C5", "6190L35912C1", "4190L84931C2"], ts=1792310020)
+gclock.t = T0 + 20
+p, t = g.for_consumer("commuter")
+check("network gone from a batch: its trains served from the last one",
+      trips(p) == ["1090L23743C5", "1090L23745C5", "6190L35912C1"])
+mad = [e for e in p.entity if e.vehicle.trip.trip_id == "1090L23743C5"][0]
+check("held: the last position and its own fix time",
+      abs(mad.vehicle.position.latitude - 40.30) < 1e-4 and mad.vehicle.timestamp == 1792309998)
+ss = [e for e in p.entity if e.vehicle.trip.trip_id == "6190L35912C1"][0]
+check("a network present: the new fix", abs(ss.vehicle.position.latitude - 43.29) < 1e-4)
+check("held: trip updates the batch lacks, none twice",
+      tut(t) == ["1090L23743C5", "1090L23745C5", "6190L35912C1"])
+check("held: the header is the new batch's", p.header.timestamp == 1792310020)
+check("held: counted once per network per batch", g.stats()["held_networks"] == 1)
+check("held: the bus stays the bus's", trips(g.for_consumer("bus")[0]) == ["4190L84931C2"])
+gclock.t = T0 + rf.NETWORK_HOLD_S
+p, _ = g.snapshot(force=True)["commuter"]
+check("at NETWORK_HOLD_S: still held", "1090L23743C5" in trips(p))
+gclock.t = T0 + rf.NETWORK_HOLD_S + 1
+p, t = g.snapshot(force=True)["commuter"]
+check("past NETWORK_HOLD_S: gone", trips(p) == ["6190L35912C1"] and "1090L23743C5" not in tut(t))
+check("past NETWORK_HOLD_S: forgotten", "10" not in g._by_network)
+GAP["vp"] = vp_feed([NROWS[0], SS2], ts=1792310100)            # Madrid back, one train
+GAP["tu"] = tu_feed(["1090L23743C5", "6190L35912C1"], ts=1792310100)
+gclock.t = T0 + 100
+p, _ = g.snapshot(force=True)["commuter"]
+check("one train missing alone: not held (the consumer's grace)",
+      trips(p) == ["1090L23743C5", "6190L35912C1"])
+GAP["vp"] = vp_feed([], ts=1792310120)
+GAP["tu"] = tu_feed([], ts=1792310120)
+gclock.t = T0 + 120
+p, t = g.snapshot(force=True)["commuter"]
+check("an empty batch: every network held", trips(p) == ["1090L23743C5", "6190L35912C1"]
+      and tut(t) == ["1090L23743C5", "6190L35912C1"])
+GAP["vp"] = vp_feed([SS2], ts=1792310140)
+gnet.fail[rf.TRIP_UPDATES_URL] = urllib.error.URLError("down")
+gclock.t = T0 + 140
+p, t = g.snapshot(force=True)["commuter"]
+check("trip updates down: positions still held, no trip updates",
+      trips(p) == ["1090L23743C5", "6190L35912C1"] and t is None)
+del gnet.fail[rf.TRIP_UPDATES_URL]
+GAP["vp"] = vp_feed([NROWS[3]], ts=1792310160)                 # San Sebastian gone too
+GAP["tu"] = tu_feed(["4190L84931C2"], ts=1792310160)
+gclock.t = T0 + 160
+p, t = g.snapshot(force=True)["commuter"]
+check("seen while trip updates were down: held with the updates it had before",
+      trips(p) == ["1090L23743C5", "6190L35912C1"] and "6190L35912C1" in tut(t))
+check("a bus network seen again: remembered", "41" in g._by_network)
 
 # --- the shared registration -------------------------------------------------------
 
