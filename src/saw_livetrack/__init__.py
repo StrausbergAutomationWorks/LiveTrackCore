@@ -38,6 +38,13 @@ Two submodules, deliberately separate:
                           dependencies. Data: Fintraffic / digitraffic.fi,
                           CC BY 4.0.
 
+  saw_livetrack.renfe     Spain's Renfe Cercanias and Rodalies feed (0.2.9):
+                          positions and trip updates routed to the commuter,
+                          intercity (Catalonia's regional lines) and bus
+                          (route_type 3) consumers, cleaned once (one row per
+                          trip, 0,0 dropped, A-B-A returns held). NOT imported
+                          here; needs the `gtfs` extra. Data: Renfe, CC BY 4.0.
+
   saw_livetrack.map_card  Which Live Track Map Card bundle an instance loads
                           and how its one dashboard resource row changes
                           (0.2.8). Pure; the Home Assistant calls are in
@@ -45,7 +52,7 @@ Two submodules, deliberately separate:
 
 `amtraker` and `gtfs` import from `track`. Never the reverse.
 
-Not affiliated with Amtrak, VIA Rail Canada, Brightline, VR or Fintraffic.
+Not affiliated with Amtrak, VIA Rail Canada, Brightline, VR, Fintraffic or Renfe.
 """
 
 from .track import (  # noqa: F401
@@ -78,4 +85,4 @@ from .amtraker import (  # noqa: F401
     speed_kmh,
 )
 
-__version__ = "0.2.8"
+__version__ = "0.2.9"

@@ -115,6 +115,27 @@ costs only its own trains (0.2.7). Every fetch and table change is under one
 lock; `register()` and `unregister()` never wait on it. Each joined record
 carries its `train`.
 
+## `saw_livetrack.renfe` - Spain's commuter trains (Renfe)
+
+One poller for every Live Track integration that draws Renfe's vehicles. Renfe
+publishes ONE GTFS-Realtime feed of positions and one of trip updates for all its
+Cercanías networks and Rodalies de Catalunya, keyless, about every 20 s, and the
+feed carries more than commuter trains: rail-replacement and feeder buses
+(`route_type` 3 in Renfe's own timetable) and Catalonia's regional lines (R11-R17).
+Each vehicle goes to ONE consumer: `bus` for a bus, `intercity` for a regional
+line, `commuter` for every other train. `for_consumer(name)` returns that
+consumer's positions and trip updates as two GTFS-Realtime feeds, cleaned once for
+everyone: the trip id is the identity (Renfe's entity ids repeat across networks),
+a trip appearing twice is kept once, `0,0` is dropped, and a position that jumps
+straight back to where the train was two fixes earlier is held. The timetable
+(16 MB, for telling the buses from the trains) loads on its own thread and then
+daily; until the first load ends every feed is empty, so a bus is never drawn as
+a train, and `static_zip()` hands the same bytes to a consumer that distills them.
+`parse_trip_id()` reads the network, train number and line out of a trip id. Needs
+the `gtfs` extra. Share one client per Home Assistant with
+`reference/shared_renfe.py`; each integration registers the consumer it draws
+(0.2.9).
+
 ## `saw_livetrack.map_card` - one map card, many integrations
 
 Every Live Track integration ships the released
@@ -144,10 +165,14 @@ Finnish rail data (`saw_livetrack.digitraffic_rail`) is from **Fintraffic /
 [digitraffic.fi](https://www.digitraffic.fi/en/railway-traffic/)**, licensed under
 [Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/).
 
+Spanish rail data (`saw_livetrack.renfe`) is from **[Renfe](https://data.renfe.com/)**,
+licensed under
+[Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/).
+
 ## Disclaimer
 
 Independent project. Not affiliated with, endorsed by or connected to Amtrak,
-VIA Rail Canada, Brightline, VR or Fintraffic.
+VIA Rail Canada, Brightline, VR, Fintraffic or Renfe.
 
 ## Tests
 
@@ -158,6 +183,7 @@ python tests/test_shared_coordinator.py
 python tests/test_digitraffic_rail.py
 python tests/test_map_card.py
 python tests/test_shared_map_card.py
+python tests/test_renfe.py
 python -m unittest discover -s tests -p "test_gtfs_*.py"
 python -m unittest tests.test_zones
 ```
