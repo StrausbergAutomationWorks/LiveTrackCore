@@ -28,6 +28,8 @@ def check(name, cond):
 
 
 ANGLES = (None, 45)
+# 0.2.12 (backlog 299): the two explicit modes join False and True.
+LIGHTS = (False, True, "glow", "wigwag")
 WEIGHTS = (0.05, 0.62, 1.5)
 CATS = (None, "", "A0", "A1", "A2", "A3", "A5", "A7", "B0", "B1", "B2", "B3", "B4", "B6", "C0", "ZZ")
 OPCATS = (None, "Government", "Military", "Coast Guard", "Law enforcement",
@@ -42,7 +44,7 @@ def digests(icons, airframe, keys):
         h = hashlib.sha256()
         path = icons.icon_path(key)
         for tone in tones:
-            for lights in (False, True):
+            for lights in LIGHTS:
                 for w in WEIGHTS + (icons.weight_for("A5"),):
                     for badge in (True, False):
                         for deg in ANGLES:
@@ -63,6 +65,10 @@ def digests(icons, airframe, keys):
     looks += [(k, icons.is_rotatable(k)) for k in keys]
     looks += [(b / 2.0, icons.quantise(b / 2.0)) for b in range(-20, 741)]
     out["decide/look"] = hashlib.sha256(json.dumps(looks).encode()).hexdigest()
+    lit = [(t, repr(v), icons.lights_mode(t, v)) for t in tones
+           for v in (False, None, True, "glow", "wigwag", "1", "x", 1, 0)]
+    lit += [(repr(q), repr(icons.lights_from_query(q))) for q in (None, "", "0", "1", "g", "w", "G", "glow", "x")]
+    out["decide/lights"] = hashlib.sha256(json.dumps(lit).encode()).hexdigest()
     return out
 
 
@@ -89,7 +95,26 @@ if __name__ == "__main__":
     # the query string: as Live Track Aircraft's picture_url wrote it at ac45b2e
     check("query: default tone omitted, b=0 and a=ART_REV last",
           ai.picture_query("default", 0.85) == "w=0.85&b=0&a=%d" % ai.ART_REV)
-    check("query: tone, weight, lights", ai.picture_query("law", 0.66, True) == "t=law&w=0.66&l=1&b=0&a=%d" % ai.ART_REV)
+    check("query: tone, weight, lights", ai.picture_query("law", 0.66, True) == "t=law&w=0.66&l=g&b=0&a=%d" % ai.ART_REV)
+    check("query: True on the police white is the wig-wag", ai.picture_query("police", 0.78, True) == "t=police&w=0.78&l=w&b=0&a=%d" % ai.ART_REV)
+    check("query: glow on the police white", ai.picture_query("police", 0.78, "glow") == "t=police&w=0.78&l=g&b=0&a=%d" % ai.ART_REV)
+    check("query: a mangled lights value is unlit", "l=" not in ai.picture_query("law", 0.66, "x"))
+
+    # the lights modes (backlog 299). The approved look: white with the red/blue glow, as drawn in
+    # 20_Research/le_flash_299_20261024 by lights=True over a probe tone equal to the police white.
+    a7 = ai.icon_path("a7")
+    ai._TONES["probe_white"] = ai._TONES["police"]
+    try:
+        approved = ai.render(a7, None, 64, "probe_white", 0.78, False, True)
+    finally:
+        del ai._TONES["probe_white"]
+    check("glow on the police white is the picture Lee looked at", ai.render(a7, None, 64, "police", 0.78, False, "glow") == approved)
+    check("True on police is the wig-wag", ai.render(a7, None, 64, "police", 0.78, False, True) == ai.render(a7, None, 64, "police", 0.78, False, "wigwag"))
+    check("True on law is the glow", ai.render(a7, None, 64, "law", 0.78, False, True) == ai.render(a7, None, 64, "law", 0.78, False, "glow"))
+    check("a mangled lights value renders unlit", ai.render(a7, None, 64, "law", 0.78, False, "x") == ai.render(a7, None, 64, "law", 0.78, False, False))
+    check("the view's l=: 1 True, g, w, anything else off",
+          (ai.lights_from_query("1"), ai.lights_from_query("g"), ai.lights_from_query("w"),
+           ai.lights_from_query("x"), ai.lights_from_query(None)) == (True, "glow", "wigwag", False, False))
     check("query: no weight", ai.picture_query("mil") == "t=mil&b=0&a=%d" % ai.ART_REV)
     check("query: a consumer's own revision", ai.picture_query("mil", rev=13).endswith("&a=13"))
 

@@ -160,7 +160,23 @@ artwork, `render()` (fill by owner class, a dark edge, gentle shading,
 police lights, a size ramp by ADS-B emitter category), and `ART_REV`, the
 picture revision a consumer puts in its URLs. Each integration serves the
 pictures from its own view; `picture_query()` gives the query string. No
-dependencies, no Home Assistant import (0.2.11).
+dependencies, no Home Assistant import (0.2.11). Since 0.2.12 the lights take
+a mode: `True` pairs them with the fill (the blue wig-wag on the police white,
+the red/blue glow on any other), `"glow"` and `"wigwag"` say which, and the
+query carries it as `l=g` or `l=w`; `lights_from_query()` reads it back, the
+old `l=1` included.
+
+## `saw_livetrack.enforcement_list` - the EnforcementAircraft list
+
+Reads the public [EnforcementAircraft](https://github.com/StrausbergAutomationWorks/EnforcementAircraft)
+list (release `data`) once per Home Assistant instance: `shared(hass.data,
+cache_path)` gives the one reader, `refresh(session)` checks `SHA256SUMS`
+first and fetches the list only when it changed, installing it only when its
+bytes match. A failure keeps the cached copy (`.storage/saw_enforcementaircraft.json`),
+which never expires. Lookups by Mode S hex: `status()`, `is_sourced()`,
+`hexes(*statuses)`. The consumer passes its own aiohttp session, made with
+`SESSION_KWARGS` (GitHub's release redirect carries a header over aiohttp's
+default 8,190-byte limit). No Home Assistant import, no aiohttp import (0.2.12).
 
 Most of the icons are by **[ADS-B Radar](https://adsb-radar.com)**, from its
 [SVG aircraft icon set](https://adsb-radar.com/help/icons.html), used under
@@ -189,6 +205,11 @@ Spanish rail data (`saw_livetrack.renfe`) is from **[Renfe](https://data.renfe.c
 licensed under
 [Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/).
 
+The enforcement-aircraft list (`saw_livetrack.enforcement_list`) contains
+information from **[EnforcementAircraft](https://github.com/StrausbergAutomationWorks/EnforcementAircraft)**,
+which is made available under the
+[Open Database License (ODbL) v1.0](https://opendatacommons.org/licenses/odbl/1-0/).
+
 ## Disclaimer
 
 Independent project. Not affiliated with, endorsed by or connected to Amtrak,
@@ -206,6 +227,7 @@ python tests/test_shared_map_card.py
 python tests/test_renfe.py
 python tests/test_aircraft_icons.py
 python -m unittest discover -s tests -p "test_gtfs_*.py"
+python -m unittest discover -s tests -p "test_enforcement_list.py"
 python -m unittest tests.test_zones
 ```
 

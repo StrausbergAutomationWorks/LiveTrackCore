@@ -57,7 +57,12 @@ Two submodules, deliberately separate:
                           draws an aircraft the same way. NOT imported
                           here; no dependencies. Icons by ADS-B Radar,
                           https://adsb-radar.com, under their author's
-                          terms: aircraft_icons/ATTRIBUTION.md.
+                          terms: aircraft_icons/ATTRIBUTION.md. Lights
+                          modes (glow, wig-wag) since 0.2.12.
+  saw_livetrack.enforcement_list
+                          The public EnforcementAircraft list (ODbL), read
+                          once per instance, cached, checksum checked
+                          (0.2.12). NOT imported here; no dependencies.
 
 `amtraker` and `gtfs` import from `track`. Never the reverse.
 
@@ -94,4 +99,4 @@ from .amtraker import (  # noqa: F401
     speed_kmh,
 )
 
-__version__ = "0.2.11"
+__version__ = "0.2.12"

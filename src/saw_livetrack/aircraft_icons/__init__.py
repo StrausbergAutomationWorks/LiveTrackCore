@@ -625,6 +625,37 @@ def lights_for(operator_category: str | None) -> bool:
     return operator_category in LIGHT_CATEGORIES
 
 
+# ! LIGHTS MODES (backlog 299, Lee 2026-10-24 17:00). True is the tone-paired
+# meaning it always had: the blue wig-wag on the police white, the red/blue
+# glow on every other tone. "glow" and "wigwag" say which, whatever the tone:
+# a state or local police aircraft on the EnforcementAircraft list is white
+# with the red/blue glow (decision I(a), drawn and looked at in
+# 20_Research/le_flash_299_20261024). The picture URL carries the mode
+# explicitly (l=g, l=w); a view still reads the old l=1 as True.
+LIGHTS_GLOW = "glow"
+LIGHTS_WIGWAG = "wigwag"
+_LIGHTS_QUERY = {LIGHTS_GLOW: "g", LIGHTS_WIGWAG: "w"}
+_LIGHTS_FROM_QUERY = {"1": True, "g": LIGHTS_GLOW, "w": LIGHTS_WIGWAG}
+
+
+def lights_mode(tone: str, lights) -> str | None:
+    """None, LIGHTS_GLOW or LIGHTS_WIGWAG: what a lights value draws on this tone.
+
+    Anything that is not False/None, True or a mode draws nothing, so a
+    mangled value fails safe.
+    """
+    if lights is True:
+        return LIGHTS_WIGWAG if tone == "police" else LIGHTS_GLOW
+    if isinstance(lights, str) and lights in _LIGHTS_QUERY:
+        return lights
+    return None
+
+
+def lights_from_query(value: str | None):
+    """A view's l= value as render()'s lights: "1" True, "g" glow, "w" wig-wag, else off."""
+    return _LIGHTS_FROM_QUERY.get(value or "", False)
+
+
 def weight_for(emitter_category: str | None) -> float:
     return _WEIGHT.get((emitter_category or "").strip().upper(), DEFAULT_WEIGHT)
 
@@ -854,8 +885,11 @@ def _police_flash(k: float, w: float, h: float) -> str:
 
 def render(path: str, degrees: int | None, size: int = 64,
            tone: str = "default", weight: float = DEFAULT_WEIGHT,
-           badge: bool = True, lights: bool = False) -> str:
-    """One icon: coloured, sized and rotated, on our badge or outlined."""
+           badge: bool = True, lights=False) -> str:
+    """One icon: coloured, sized and rotated, on our badge or outlined.
+
+    lights: False, True (paired with the tone), LIGHTS_GLOW or LIGHTS_WIGWAG.
+    """
     with open(path, "r", encoding="utf-8", errors="replace") as fh:
         src = fh.read()
     painted = _PAINT_KEEP.search(src) is not None
@@ -932,11 +966,12 @@ def render(path: str, degrees: int | None, size: int = 64,
            + '<rect x="0" y="0" width="%s" height="%s" fill="url(#sp)" mask="url(#m)"/>' % (W, H)
            + '<rect x="0" y="0" width="%s" height="%s" fill="url(#fa)" mask="url(#m)"/>' % (W, H))
     glow = ""
-    if lights and tone == "police":
+    mode = lights_mode(tone, lights)
+    if mode == LIGHTS_WIGWAG:
         # State and local police: Ships' blue wig-wag, on top, unfiltered.
         return (head + defs + '<g filter="url(#e)">' + lit + '</g>'
                 + _police_flash(k, w, h) + '</svg>')
-    if lights:
+    if mode == LIGHTS_GLOW:
         # UNDER the outlined art, so the black edge still separates the
         # fill from the glow. Only on this path: the live, unrotated picture.
         px = max(w, h) / float(size)
@@ -977,12 +1012,14 @@ def icon_path(key: str) -> str | None:
 # be200 and us2 (2026-10-06); 8: the 1 px edge and shading (2026-10-21);
 # 9: the police lamps moved forward (2026-10-23) - 1440d16 shipped without
 # this bump and browsers kept the old picture; 10: the King Air 350's own
-# icon, kingair350.svg (2026-10-24).
-ART_REV = 10
+# icon, kingair350.svg (2026-10-24); 11: the lights mode in the URL (l=g,
+# l=w) and the red/blue glow on the police white for a listed aircraft
+# (backlog 299, 2026-10-24).
+ART_REV = 11
 
 
 def picture_query(tone: str = "default", weight: float | None = None,
-                  lights: bool = False, rev: int | None = None) -> str:
+                  lights=False, rev: int | None = None) -> str:
     """The entity_picture's query string: one silhouette, UNROTATED, with no disc.
 
     ! rev is the a= value, ART_REV when not given: a consumer with pictures of
@@ -1000,8 +1037,9 @@ def picture_query(tone: str = "default", weight: float | None = None,
         extra.append("t=%s" % tone)
     if weight is not None:
         extra.append("w=%.2f" % weight)
-    if lights:
-        extra.append("l=1")
+    mode = lights_mode(tone, lights)
+    if mode:
+        extra.append("l=%s" % _LIGHTS_QUERY[mode])
     extra.append("b=0")
     extra.append("a=%d" % (ART_REV if rev is None else rev))
     return "&".join(extra)
