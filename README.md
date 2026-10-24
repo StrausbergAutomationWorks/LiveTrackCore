@@ -152,6 +152,24 @@ adding them. No dependencies, no Home Assistant import. Each integration
 copies `reference/shared_map_card.py` verbatim for the Home Assistant calls
 (0.2.8).
 
+## `saw_livetrack.aircraft_icons` - aircraft marker icons
+
+The marker icons of the Live Track aircraft integrations, so each draws an
+aircraft the same way: the ICAO type designator to icon table, the SVG
+artwork, `render()` (fill by owner class, a dark edge, gentle shading,
+police lights, a size ramp by ADS-B emitter category), and `ART_REV`, the
+picture revision a consumer puts in its URLs. Each integration serves the
+pictures from its own view; `picture_query()` gives the query string. No
+dependencies, no Home Assistant import (0.2.11).
+
+Most of the icons are by **[ADS-B Radar](https://adsb-radar.com)**, from its
+[SVG aircraft icon set](https://adsb-radar.com/help/icons.html), used under
+the author's terms, which ask for a backlink to ADS-B Radar. They are not
+covered by this package's MIT licence, which covers the code; the icons drawn
+for this project were donated to ADS-B Radar and are under the same terms.
+Which is which, and what was changed:
+[`src/saw_livetrack/aircraft_icons/ATTRIBUTION.md`](src/saw_livetrack/aircraft_icons/ATTRIBUTION.md).
+
 ## Data attribution
 
 Train data is provided by **[Amtraker](https://amtraker.com)** and is licensed
@@ -186,13 +204,15 @@ python tests/test_digitraffic_rail.py
 python tests/test_map_card.py
 python tests/test_shared_map_card.py
 python tests/test_renfe.py
+python tests/test_aircraft_icons.py
 python -m unittest discover -s tests -p "test_gtfs_*.py"
 python -m unittest tests.test_zones
 ```
 
-The first four are scripts that exit non-zero on a failed check; run them
+The first four, and `test_aircraft_icons.py`, are scripts that exit non-zero on a failed check; run them
 directly, not through `unittest discover`.
 
 ## Licence
 
-MIT.
+MIT, except the ADS-B Radar aircraft icons, which are under their author's
+terms: see `src/saw_livetrack/aircraft_icons/ATTRIBUTION.md`.

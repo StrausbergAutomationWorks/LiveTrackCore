@@ -50,6 +50,15 @@ Two submodules, deliberately separate:
                           (0.2.8). Pure; the Home Assistant calls are in
                           reference/shared_map_card.py. NOT imported here.
 
+  saw_livetrack.aircraft_icons
+                          The Live Track aircraft marker icons: the type
+                          table, the artwork, render(), tones, lights and
+                          ART_REV (0.2.11), shared so every integration
+                          draws an aircraft the same way. NOT imported
+                          here; no dependencies. Icons by ADS-B Radar,
+                          https://adsb-radar.com, under their author's
+                          terms: aircraft_icons/ATTRIBUTION.md.
+
 `amtraker` and `gtfs` import from `track`. Never the reverse.
 
 Not affiliated with Amtrak, VIA Rail Canada, Brightline, VR, Fintraffic or Renfe.
@@ -85,4 +94,4 @@ from .amtraker import (  # noqa: F401
     speed_kmh,
 )
 
-__version__ = "0.2.10"
+__version__ = "0.2.11"

@@ -1,0 +1,2 @@
+# The aircraft_icons test reads its golden digests (0.2.11).
+include tests/aircraft_icons_golden.json

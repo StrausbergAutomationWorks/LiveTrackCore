@@ -4,13 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "saw-livetrack"
-version = "0.2.10"
-description = "Shared code for the Live Track Home Assistant integrations: source-agnostic fix tracking, GTFS and GTFS-Realtime, time zones from a coordinate, Finland's trains from Fintraffic Digitraffic, Spain's Renfe commuter feed, and an Amtraker API client"
+version = "0.2.11"
+description = "Shared code for the Live Track Home Assistant integrations: source-agnostic fix tracking, GTFS and GTFS-Realtime, time zones from a coordinate, Finland's trains from Fintraffic Digitraffic, Spain's Renfe commuter feed, the Live Track aircraft marker icons, and an Amtraker API client"
 readme = "README.md"
 requires-python = ">=3.11"
-license = "MIT"
+# The code is MIT. The aircraft icons by ADS-B Radar are under their author's own terms
+# (a backlink), stated in aircraft_icons/ATTRIBUTION.md, which ships with them.
+license = "MIT AND LicenseRef-ADSB-Radar-Icons"
+license-files = ["LICENSE", "src/saw_livetrack/aircraft_icons/ATTRIBUTION.md"]
 authors = [{ name = "StrausbergAutomationWorks" }]
-keywords = ["home-assistant", "train-tracking", "geo-location", "amtrak", "via-rail", "brightline", "amtraker", "gtfs", "gtfs-realtime", "commuter-rail", "finland", "digitraffic", "spain", "renfe", "cercanias"]
+keywords = ["home-assistant", "train-tracking", "geo-location", "amtrak", "via-rail", "brightline", "amtraker", "gtfs", "gtfs-realtime", "commuter-rail", "finland", "digitraffic", "spain", "renfe", "cercanias", "aircraft", "ads-b"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
@@ -37,6 +40,10 @@ Issues = "https://github.com/StrausbergAutomationWorks/LiveTrackCore/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# The aircraft icons and their attribution ship INSIDE the package (0.2.11).
+[tool.setuptools.package-data]
+"saw_livetrack.aircraft_icons" = ["icons/*.svg", "ATTRIBUTION.md"]
 
 [tool.setuptools.package-dir]
 "" = "src"
