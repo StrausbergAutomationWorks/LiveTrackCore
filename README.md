@@ -193,7 +193,9 @@ instance (`shared(hass.data)`), because a free feed's rate limit is counted per
 IP address, not per integration. Each consumer names the Mode S hexes it wants
 (`set_hexes`) and one request a minute asks for all of them (`hex_round`); a
 circle (`circle`) asked again within a few seconds by anyone is answered from
-the same request; every request to one source is spaced a second apart; and
+the same request; a consumer's circle lying wholly inside another consumer's
+recent answer is answered from that answer, filtered by distance, with no
+request at all (0.2.14); every request to one source is spaced a second apart; and
 one HTTP 429 backoff covers every consumer. Each consumer says which aircraft
 it draws (`claim`) so another can leave them alone (`claimed_by_others`). The
 circle's sources are the caller's choice; the hex request goes to adsb.fi

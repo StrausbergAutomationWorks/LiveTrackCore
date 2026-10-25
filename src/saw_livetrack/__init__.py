@@ -66,8 +66,9 @@ Two submodules, deliberately separate:
   saw_livetrack.adsb_poll
                           One adsb.fi poll per instance for the aircraft
                           integrations: a union hex round a minute, shared
-                          circles, one 429 backoff, claims (0.2.13). NOT
-                          imported here; no dependencies.
+                          circles, one 429 backoff, claims (0.2.13); a
+                          circle inside another's costs no request
+                          (0.2.14). NOT imported here; no dependencies.
 
 `amtraker` and `gtfs` import from `track`. Never the reverse.
 
@@ -104,4 +105,4 @@ from .amtraker import (  # noqa: F401
     speed_kmh,
 )
 
-__version__ = "0.2.13"
+__version__ = "0.2.14"

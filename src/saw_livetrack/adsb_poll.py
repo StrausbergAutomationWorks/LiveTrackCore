@@ -63,6 +63,12 @@ HEX_STALE_S = 3 * HEX_INTERVAL_S
 MAX_PER_REQUEST = 994
 PACE_S = 1.1               # adsb.fi: 1 request a second, from this IP
 CIRCLE_SHARE_S = 10.0      # under the 15 s poll floor, so one consumer never reuses its own answer
+# ! A COVERED CIRCLE COSTS NO REQUEST (0.2.14, Lee 2026-10-24 23:58 and 2026-10-25 00:25): a consumer's
+# circle lying wholly inside another consumer's circle is answered from that consumer's last answer,
+# filtered by distance, while it is at most this old, whatever the two source lists. Over the 15 s poll
+# floor, so a neighbour polling every 15 s is always fresh enough; a neighbour polling slower, or
+# failing, is not, and the circle is asked itself.
+COVER_FRESH_S = 20.0
 
 # --- backoff (backlog 244) ----------------------------------------------------
 BACKOFF_FIRST_S = 60.0
@@ -321,7 +327,12 @@ class Poll:
         self._pace_locks: dict[str, asyncio.Lock] = {}
         self._last_start: dict[str, float] = {}
         self._circles: dict[tuple, list] = {}
+        # Each consumer's last circle answer: (time, lat, lon, radius_km ASKED - the nm radius in km,
+        # source, observations). What a covered circle is answered from.
+        self._answers: dict[str, tuple] = {}
         self.requests: dict[str, int] = {}      # by source, since start: what the IP spent
+        self.covered_answers = 0                # circles answered from another consumer's answer
+        self.circle_how: dict[str, str] = {}    # consumer -> "covered" or "asked", its last circle
 
     # --- consumers ------------------------------------------------------------
     def set_hexes(self, consumer: str, hexes: Iterable[str] | None) -> None:
@@ -353,6 +364,8 @@ class Poll:
         """A consumer unloading: its hexes and claims go."""
         self._hexes.pop(consumer, None)
         self._claims.pop(consumer, None)
+        self._answers.pop(consumer, None)
+        self.circle_how.pop(consumer, None)
 
     # --- one request ----------------------------------------------------------
     async def _pace(self, source: str) -> None:
@@ -433,14 +446,57 @@ class Poll:
             return max(shorts, key=lambda s: len(s[1]))
         raise SourceError("; ".join(failures) or "no sources configured")
 
+    def covered(self, consumer: str, latitude: float, longitude: float,
+                radius_km: float) -> tuple[str, list[Observation]] | None:
+        """(source, observations) for a circle wholly inside ANOTHER consumer's fresh answer, else None.
+
+        ! Wholly inside means the distance between the centres plus this radius is at most the radius
+        that consumer actually ASKED (its nm radius in km, not the km it configured: rounding to whole
+        nm can shrink it by up to 0.93 km). A consumer's own answer never covers it. The freshest
+        covering answer wins; its source is passed on, so a consumer can credit the feed that answered.
+        """
+        t = self._clock()
+        best = None
+        for who, (at, lat, lon, asked_km, source, obs) in self._answers.items():
+            if who == consumer or t - at > COVER_FRESH_S:
+                continue
+            if km_between(latitude, longitude, lat, lon) + radius_km <= asked_km:
+                if best is None or at > best[0]:
+                    best = (at, source, obs)
+        if best is None:
+            return None
+        self.covered_answers += 1
+        return best[1], [o for o in best[2]
+                         if km_between(latitude, longitude, o.latitude, o.longitude) <= radius_km]
+
     async def circle(self, session, latitude: float, longitude: float, radius_km: float, now: float,
                      sources: tuple[str, ...] = FI_THEN_LOL, min_expected: int | None = None,
-                     user_agent: str | None = None) -> tuple[str, list[Observation]]:
+                     user_agent: str | None = None,
+                     consumer: str | None = None) -> tuple[str, list[Observation]]:
         """Every aircraft in the circle: (source, observations). Raises SourceError.
 
+        ! A COVERED CIRCLE COSTS NO REQUEST (0.2.14): with `consumer` given, a circle wholly inside
+        another consumer's fresh answer is answered from it (covered()); otherwise asked, and the
+        answer kept as this consumer's, for whoever lies inside it.
         ! AN IDENTICAL CIRCLE IS ASKED ONCE: the same centre (to 4 decimals, ~11 m), radius in nm and
         sources within CIRCLE_SHARE_S, by any consumer, gets that answer or that failure.
         """
+        if consumer is not None:
+            hit = self.covered(consumer, latitude, longitude, radius_km)
+            if hit is not None:
+                self.circle_how[consumer] = "covered"
+                return hit
+            self.circle_how[consumer] = "asked"
+        res = await self._circle_shared(session, latitude, longitude, radius_km, now, sources,
+                                        min_expected, user_agent)
+        if consumer is not None:
+            nm = max(1, min(250, round(radius_km / 1.852)))
+            self._answers[consumer] = (self._clock(), latitude, longitude, nm * 1.852, res[0], res[1])
+        return res
+
+    async def _circle_shared(self, session, latitude: float, longitude: float, radius_km: float,
+                             now: float, sources: tuple[str, ...], min_expected: int | None,
+                             user_agent: str | None) -> tuple[str, list[Observation]]:
         nm = max(1, min(250, round(radius_km / 1.852)))
         key = (round(latitude, 4), round(longitude, 4), nm, tuple(sources))
         t = self._clock()

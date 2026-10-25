@@ -274,6 +274,79 @@ class TestCircle(unittest.TestCase):
         self.assertEqual(s.agents, ["X/1"])
 
 
+class TestCovered(unittest.TestCase):
+    """0.2.14: a circle wholly inside another consumer's fresh answer costs no request."""
+    BIG = (43.3925, -87.8218, 463.0)          # Live Track Aircraft's circle as Lee set it, 2026-10-24
+    HOME = (41.895, -87.995, 56.0)            # 167 km from that centre: wholly inside
+
+    def setup(self, answer=None):
+        p, clock, _ = make()
+        s = Session(answer or (lambda u: Resp(200, payload(rec("a00001", lat=41.90, lon=-87.99),
+                                                           rec("a00002", lat=43.39, lon=-87.82)))))
+        run(p.circle(s, *self.BIG, 1000.0, consumer="lta"))
+        return p, clock, s
+
+    def test_inside_costs_no_request_and_is_filtered(self):
+        p, _, s = self.setup()
+        name, obs = run(p.circle(s, *self.HOME, 1000.0, sources=ap.FI_ONLY, consumer="ltea"))
+        self.assertEqual(len(s.asked), 1)
+        self.assertEqual([o.identity for o in obs], ["a00001"])      # the far one is outside 56 km
+        self.assertEqual(p.circle_how["ltea"], "covered")
+        self.assertEqual(p.covered_answers, 1)
+
+    def test_whatever_the_sources_and_the_answering_feed_is_passed_on(self):
+        p, _, s = self.setup(lambda u: Resp(503, {}) if "adsb.fi" in u else Resp(200, payload(rec("a00001", lat=41.9, lon=-87.99))))
+        name, obs = run(p.circle(s, *self.HOME, 1000.0, sources=ap.FI_ONLY, consumer="ltea"))
+        self.assertEqual(name, ap.LOL)
+        self.assertFalse(any("adsb.lol" in u for u in s.asked[2:]))   # nothing asked for the covered one
+        self.assertEqual(len(s.asked), 2)
+
+    def test_partly_outside_is_asked(self):
+        p, _, s = self.setup()
+        run(p.circle(s, 41.895, -87.995, 300.0, 1000.0, sources=ap.FI_ONLY, consumer="ltea"))
+        self.assertEqual(len(s.asked), 2)
+        self.assertEqual(p.circle_how["ltea"], "asked")
+
+    def test_stale_neighbour_is_not_used(self):
+        # over the 15 s poll floor, so a neighbour polling every 15 s always covers; 21 s is too old
+        self.assertTrue(15.0 < ap.COVER_FRESH_S <= 20.0)
+        p, clock, s = self.setup()
+        clock.t += 21.0
+        run(p.circle(s, *self.HOME, 1000.0, sources=ap.FI_ONLY, consumer="ltea"))
+        self.assertEqual(len(s.asked), 2)
+
+    def test_own_answer_never_covers_itself(self):
+        p, clock, s = self.setup()
+        clock.t += ap.CIRCLE_SHARE_S + 0.1
+        run(p.circle(s, 43.3925, -87.8218, 400.0, 1000.0, consumer="lta"))
+        self.assertEqual(len(s.asked), 2)
+
+    def test_the_asked_radius_is_the_nm_one(self):
+        p, _, s = make()[0], None, Session(lambda u: Resp(200, payload()))
+        run(p.circle(s, 41.9, -87.9, 56.0, 1000.0, consumer="lta"))      # 30 nm = 55.56 km asked
+        run(p.circle(s, 41.9, -87.9, 55.6, 1000.0, sources=ap.FI_ONLY, consumer="ltea"))
+        self.assertEqual(len(s.asked), 2)                                # 55.6 > 55.56: not covered
+        run(p.circle(s, 41.9, -87.9, 55.5, 1000.0, sources=ap.FI_ONLY, consumer="ltea2"))
+        self.assertEqual(len(s.asked), 2)                                # 55.5 is
+
+    def test_without_a_consumer_nothing_changes(self):
+        p, _, s = self.setup()
+        run(p.circle(s, *self.HOME, 1000.0, sources=ap.FI_ONLY))
+        self.assertEqual(len(s.asked), 2)
+
+    def test_a_failed_circle_leaves_nothing_to_cover_with(self):
+        p, _, _ = make()
+        bad = Session(lambda u: Resp(503, {}))
+        with self.assertRaises(ap.SourceError):
+            run(p.circle(bad, *self.BIG, 1000.0, consumer="lta"))
+        self.assertIsNone(p.covered("ltea", *self.HOME))
+
+    def test_release_drops_the_answer(self):
+        p, _, s = self.setup()
+        p.release("lta")
+        self.assertIsNone(p.covered("ltea", *self.HOME))
+
+
 class TestClaims(unittest.TestCase):
     def test_claims_and_release(self):
         p, _, _ = make()
