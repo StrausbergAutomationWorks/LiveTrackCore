@@ -186,6 +186,19 @@ for this project were donated to ADS-B Radar and are under the same terms.
 Which is which, and what was changed:
 [`src/saw_livetrack/aircraft_icons/ATTRIBUTION.md`](src/saw_livetrack/aircraft_icons/ATTRIBUTION.md).
 
+## `saw_livetrack.adsb_poll` - one ADS-B poll per instance
+
+The aircraft integrations ask adsb.fi through one poller per Home Assistant
+instance (`shared(hass.data)`), because a free feed's rate limit is counted per
+IP address, not per integration. Each consumer names the Mode S hexes it wants
+(`set_hexes`) and one request a minute asks for all of them (`hex_round`); a
+circle (`circle`) asked again within a few seconds by anyone is answered from
+the same request; every request to one source is spaced a second apart; and
+one HTTP 429 backoff covers every consumer. Each consumer says which aircraft
+it draws (`claim`) so another can leave them alone (`claimed_by_others`). The
+circle's sources are the caller's choice; the hex request goes to adsb.fi
+only. No Home Assistant import, no aiohttp import (0.2.13).
+
 ## Data attribution
 
 Train data is provided by **[Amtraker](https://amtraker.com)** and is licensed
@@ -210,6 +223,10 @@ information from **[EnforcementAircraft](https://github.com/StrausbergAutomation
 which is made available under the
 [Open Database License (ODbL) v1.0](https://opendatacommons.org/licenses/odbl/1-0/).
 
+Aircraft positions (`saw_livetrack.adsb_poll`) are from **[adsb.fi](https://adsb.fi)**,
+and from **[adsb.lol](https://adsb.lol)** (ODbL v1.0) where a consumer asks it;
+each consumer credits the feeds it uses.
+
 ## Disclaimer
 
 Independent project. Not affiliated with, endorsed by or connected to Amtrak,
@@ -228,6 +245,7 @@ python tests/test_renfe.py
 python tests/test_aircraft_icons.py
 python -m unittest discover -s tests -p "test_gtfs_*.py"
 python -m unittest discover -s tests -p "test_enforcement_list.py"
+python -m unittest tests.test_adsb_poll
 python -m unittest tests.test_zones
 ```
 

@@ -63,6 +63,11 @@ Two submodules, deliberately separate:
                           The public EnforcementAircraft list (ODbL), read
                           once per instance, cached, checksum checked
                           (0.2.12). NOT imported here; no dependencies.
+  saw_livetrack.adsb_poll
+                          One adsb.fi poll per instance for the aircraft
+                          integrations: a union hex round a minute, shared
+                          circles, one 429 backoff, claims (0.2.13). NOT
+                          imported here; no dependencies.
 
 `amtraker` and `gtfs` import from `track`. Never the reverse.
 
@@ -99,4 +104,4 @@ from .amtraker import (  # noqa: F401
     speed_kmh,
 )
 
-__version__ = "0.2.12"
+__version__ = "0.2.13"

@@ -43,6 +43,14 @@ SESSION_KEY = "saw_enforcementaircraft_session"
 HEADER_LIMIT = 32768
 SESSION_KWARGS = {"max_line_size": HEADER_LIMIT, "max_field_size": HEADER_LIMIT}
 
+# ! FEDERAL LAW-ENFORCEMENT REGISTRANTS, FOUND, NOT BUILT (backlog 297, 0.2.13). The list's federal
+# rule names every federal law-enforcement registrant in the FAA registry AS OF ITS BUILD; an
+# integration that holds the FAA registry (Live Track Aircraft) publishes the registrants it finds
+# under this SAW-neutral key, {hex: {"registration", "operator", "operator_short"}}, so a registration
+# newer than the list's build is still watched nationwide by whoever draws the list. Absent when no
+# installed integration holds the registry; a consumer then has the list alone.
+FEDERAL_KEY = "saw_federal_law_enforcement"
+
 SOURCED = "sourced"
 DETECTED = "detected_unconfirmed"
 CLEARED = "cleared"
