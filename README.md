@@ -201,6 +201,22 @@ it draws (`claim`) so another can leave them alone (`claimed_by_others`). The
 circle's sources are the caller's choice; the hex request goes to adsb.fi
 only. No Home Assistant import, no aiohttp import (0.2.13).
 
+## `saw_livetrack.faa_registry` - the FAA registry, once per instance
+
+The FAA's [Releasable Aircraft Database](https://registry.faa.gov/database/ReleasableAircraft.zip),
+read once per Home Assistant instance for the aircraft integrations (0.2.15): `shared(hass.data,
+storage_dir)` gives the one registry, `load()` reads the caches (`.storage/saw_faa_gov_aircraft.json`,
+`saw_faa_owners.sqlite`), and `refresh(session)` downloads the archive when the cache is a week old or
+of an older rule, under one lock, so two integrations never download it twice. A failure keeps the
+tables in use; the owner table never breaks the government one. `lookup_government(hex)` gives a
+government registrant's registration, owner, owner class (`categorise`: federal law enforcement,
+law enforcement, Coast Guard, military, fire and EMS, ...) and, for law enforcement, a short name
+(`operator_short`: DHS, CBP, ICE, FBI, USMS, DEA, ATF, USSS, USCG, DOJ, or a state or local force
+shortened to 22 characters). `lookup_owner(hex)` gives any registration's title holder.
+`from_feed_flags()` reads the feed's military and PIA flags. The data comes from the FAA, which
+withholds what 49 U.S.C. 44114 requires before it publishes; nothing is shipped. No Home Assistant
+import, no aiohttp import.
+
 ## Data attribution
 
 Train data is provided by **[Amtraker](https://amtraker.com)** and is licensed

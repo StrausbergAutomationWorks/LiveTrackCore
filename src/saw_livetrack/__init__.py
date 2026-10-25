@@ -69,6 +69,12 @@ Two submodules, deliberately separate:
                           circles, one 429 backoff, claims (0.2.13); a
                           circle inside another's costs no request
                           (0.2.14). NOT imported here; no dependencies.
+  saw_livetrack.faa_registry
+                          The FAA registry for the aircraft integrations,
+                          once per instance: government registrants with
+                          owner class and agency short names, and every
+                          registration's owner; one download, cached
+                          (0.2.15). NOT imported here; no dependencies.
 
 `amtraker` and `gtfs` import from `track`. Never the reverse.
 
@@ -105,4 +111,4 @@ from .amtraker import (  # noqa: F401
     speed_kmh,
 )
 
-__version__ = "0.2.14"
+__version__ = "0.2.15"
