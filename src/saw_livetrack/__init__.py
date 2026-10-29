@@ -58,11 +58,13 @@ Two submodules, deliberately separate:
                           here; no dependencies. Icons by ADS-B Radar,
                           https://adsb-radar.com, under their author's
                           terms: aircraft_icons/ATTRIBUTION.md. Lights
-                          modes (glow, wig-wag) since 0.2.12.
+                          modes (glow, wig-wag) since 0.2.12; the
+                          steady charter glow since 0.2.16.
   saw_livetrack.enforcement_list
                           The public EnforcementAircraft list (ODbL), read
                           once per instance, cached, checksum checked
-                          (0.2.12). NOT imported here; no dependencies.
+                          (0.2.12); the ICE Air charter status (0.2.16).
+                          NOT imported here; no dependencies.
   saw_livetrack.adsb_poll
                           One adsb.fi poll per instance for the aircraft
                           integrations: a union hex round a minute, shared
@@ -111,4 +113,4 @@ from .amtraker import (  # noqa: F401
     speed_kmh,
 )
 
-__version__ = "0.2.15"
+__version__ = "0.2.16"

@@ -118,6 +118,40 @@ if __name__ == "__main__":
     check("query: no weight", ai.picture_query("mil") == "t=mil&b=0&a=%d" % ai.ART_REV)
     check("query: a consumer's own revision", ai.picture_query("mil", rev=13).endswith("&a=13"))
 
+    # 0.2.16 (backlog 313): the ICE Air charter glow, look C4, steady. Rebuilt here exactly as
+    # bin\ltsalt_charter_look.py drew C4 on the sheet Lee chose from (halos() under the art).
+    import re as _re
+
+    def c4(svg):
+        w, h = [float(v) for v in _re.search(r'viewBox="0 0 ([\d.]+) ([\d.]+)"', svg).groups()]
+        px = max(w, h) / 64.0
+        defs, uses = "", ""
+        for fid, colour, grow, blur, op in (("cr", "#FF2020", 3.0, 2.2, 0.85), ("cb", "#2060FF", 1.4, 1.0, 0.9)):
+            defs += ('<filter id="%s" filterUnits="userSpaceOnUse" x="0" y="0" width="%s" height="%s">'
+                     '<feMorphology in="SourceAlpha" operator="dilate" radius="%.4f"/><feGaussianBlur stdDeviation="%.4f" result="g"/>'
+                     '<feFlood flood-color="%s" flood-opacity="%.2f"/><feComposite in2="g" operator="in"/></filter>'
+                     % (fid, ai._fmt(w), ai._fmt(h), grow * px, blur * px, colour, op))
+            uses += '<g opacity="1"><use href="#art" filter="url(#%s)"/></g>' % fid
+        i = svg.index('<g filter="url(#e)">')
+        return svg[:i] + "<defs>" + defs + "</defs>" + uses + svg[i:]
+
+    for key, tone, w in (("a320", "default", 0.85), ("b737", "default", 0.85), ("kingair350", "default", 0.72),
+                         ("a7", "police", 0.78), ("a7", "gov", 0.78)):
+        p = ai.icon_path(key)
+        check("charter on %s/%s is look C4 as Lee saw it" % (key, tone),
+              ai.render(p, None, 64, tone, w, False, "charter") == c4(ai.render(p, None, 64, tone, w, False, False)))
+    a320 = ai.icon_path("a320")
+    cp = ai.render(a320, None, 64, "default", 0.85, False, "charter")
+    check("the charter glow is steady: no opacity animation", 'attributeName="opacity"' not in cp)
+    check("the charter glow is not the sourced glow", cp != ai.render(a320, None, 64, "default", 0.85, False, "glow"))
+    check("charter on a turned picture or a badge draws nothing extra",
+          ai.render(a320, 45, 64, "default", 0.85, False, "charter") == ai.render(a320, 45, 64, "default", 0.85, False, False)
+          and ai.render(a320, None, 64, "default", 0.85, True, "charter") == ai.render(a320, None, 64, "default", 0.85, True, False))
+    check("query: charter is l=c", ai.picture_query("default", 0.85, "charter") == "w=0.85&l=c&b=0&a=%d" % ai.ART_REV)
+    check("query: charter on the police white is still l=c", ai.picture_query("police", 0.78, "charter") == "t=police&w=0.78&l=c&b=0&a=%d" % ai.ART_REV)
+    check("the view's l=c is charter", ai.lights_from_query("c") == "charter" == ai.LIGHTS_CHARTER)
+    check("True never means charter", all(ai.lights_mode(t, True) != "charter" for t in ai._TONES))
+
     # the licence travels with the icons
     att = open(os.path.join(os.path.dirname(ai.__file__), "ATTRIBUTION.md"), encoding="utf-8").read()
     check("ATTRIBUTION.md ships beside the icons", "ADS-B Radar" in att)

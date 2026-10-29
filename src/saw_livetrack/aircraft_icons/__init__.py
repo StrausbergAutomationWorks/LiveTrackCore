@@ -634,12 +634,15 @@ def lights_for(operator_category: str | None) -> bool:
 # explicitly (l=g, l=w); a view still reads the old l=1 as True.
 LIGHTS_GLOW = "glow"
 LIGHTS_WIGWAG = "wigwag"
-_LIGHTS_QUERY = {LIGHTS_GLOW: "g", LIGHTS_WIGWAG: "w"}
-_LIGHTS_FROM_QUERY = {"1": True, "g": LIGHTS_GLOW, "w": LIGHTS_WIGWAG}
+# ! "charter" (0.2.16, backlog 313): the STEADY ICE Air charter glow, l=c. Never
+# from True: only a consumer that knows the list's charter status asks for it.
+LIGHTS_CHARTER = "charter"
+_LIGHTS_QUERY = {LIGHTS_GLOW: "g", LIGHTS_WIGWAG: "w", LIGHTS_CHARTER: "c"}
+_LIGHTS_FROM_QUERY = {"1": True, "g": LIGHTS_GLOW, "w": LIGHTS_WIGWAG, "c": LIGHTS_CHARTER}
 
 
 def lights_mode(tone: str, lights) -> str | None:
-    """None, LIGHTS_GLOW or LIGHTS_WIGWAG: what a lights value draws on this tone.
+    """None, LIGHTS_GLOW, LIGHTS_WIGWAG or LIGHTS_CHARTER: what a lights value draws on this tone.
 
     Anything that is not False/None, True or a mode draws nothing, so a
     mangled value fails safe.
@@ -652,7 +655,7 @@ def lights_mode(tone: str, lights) -> str | None:
 
 
 def lights_from_query(value: str | None):
-    """A view's l= value as render()'s lights: "1" True, "g" glow, "w" wig-wag, else off."""
+    """A view's l= value as render()'s lights: "1" True, "g" glow, "w" wig-wag, "c" charter, else off."""
     return _LIGHTS_FROM_QUERY.get(value or "", False)
 
 
@@ -812,6 +815,28 @@ def _flash(fid: str, values: str) -> str:
             'repeatCount="indefinite"/></g>' % (values[0], fid, fid, values, LIGHT_PERIOD_S))
 
 
+# ! THE ICE AIR CHARTER GLOW (backlog 313; Lee 2026-10-29 00:37 chose look C4 of
+# 30_Integrations/Live_Track_SALT/20_Research/charter_look_20261029, drawn at
+# 60 px on OSM streets, water and the Loop). STEADY, never flashing: the
+# airframe flies ICE Air charters and other work too, so it does not take the
+# sourced flash. Red grown wide outside, blue close inside, both UNDER the
+# outlined art as the glow is. (id, colour, grow px, blur px, opacity)
+CHARTER_HALOS = (("cr", LIGHT_RED, 3.0, 2.2, 0.85), ("cb", LIGHT_BLUE, 1.4, 1.0, 0.9))
+
+
+def _steady_halos(w: float, h: float, px: float) -> tuple[str, str]:
+    """(defs, drawn) for the charter glow: no animation."""
+    defs, drawn = "", ""
+    for fid, colour, grow, blur, op in CHARTER_HALOS:
+        defs += ('<filter id="%s" filterUnits="userSpaceOnUse" x="0" y="0" width="%s" height="%s">'
+                 '<feMorphology in="SourceAlpha" operator="dilate" radius="%.4f"/>'
+                 '<feGaussianBlur stdDeviation="%.4f" result="g"/>'
+                 '<feFlood flood-color="%s" flood-opacity="%.2f"/><feComposite in2="g" operator="in"/></filter>'
+                 % (fid, _fmt(w), _fmt(h), grow * px, blur * px, colour, op))
+        drawn += '<g opacity="1"><use href="#art" filter="url(#%s)"/></g>' % fid
+    return "<defs>" + defs + "</defs>", drawn
+
+
 # ! PAINTED ICONS (2026-10-22). An icon whose root <svg> carries
 # data-paint="keep" is drawn in its OWN colours: the VC-25A in its livery
 # (Lee 2026-10-21, draft A). decolour() would strip it to one tone. The tone
@@ -888,7 +913,7 @@ def render(path: str, degrees: int | None, size: int = 64,
            badge: bool = True, lights=False) -> str:
     """One icon: coloured, sized and rotated, on our badge or outlined.
 
-    lights: False, True (paired with the tone), LIGHTS_GLOW or LIGHTS_WIGWAG.
+    lights: False, True (paired with the tone), LIGHTS_GLOW, LIGHTS_WIGWAG or LIGHTS_CHARTER.
     """
     with open(path, "r", encoding="utf-8", errors="replace") as fh:
         src = fh.read()
@@ -978,6 +1003,10 @@ def render(path: str, degrees: int | None, size: int = 64,
         defs += ('<defs>' + _halo("lr", LIGHT_RED, w, h, px)
                  + _halo("lb", LIGHT_BLUE, w, h, px) + '</defs>')
         glow = _flash("lr", "1;0") + _flash("lb", "0;1")
+    if mode == LIGHTS_CHARTER:
+        # Steady, UNDER the outlined art, as the glow. Only on this path.
+        cdefs, glow = _steady_halos(w, h, float(max(w, h)) / float(size))
+        defs += cdefs
     return (head + defs + glow + '<g filter="url(#e)">' + lit + '</g></svg>')
 
 
@@ -1014,7 +1043,9 @@ def icon_path(key: str) -> str | None:
 # this bump and browsers kept the old picture; 10: the King Air 350's own
 # icon, kingair350.svg (2026-10-24); 11: the lights mode in the URL (l=g,
 # l=w) and the red/blue glow on the police white for a listed aircraft
-# (backlog 299, 2026-10-24).
+# (backlog 299, 2026-10-24). NOT bumped for 0.2.16's charter glow: it is a
+# new picture under a new query (l=c) and changes none, which the golden
+# digests in tests/test_aircraft_icons.py hold.
 ART_REV = 11
 
 

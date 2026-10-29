@@ -2,7 +2,7 @@
 
 EnforcementAircraft (https://github.com/StrausbergAutomationWorks/EnforcementAircraft) is a
 public data repository, ODbL v1.0: immigration and law-enforcement aircraft by Mode S hex, each
-with a status (sourced, detected_unconfirmed, cleared). Release `data` holds
+with a status (sourced, detected_unconfirmed, ice_air_charter since 0.2.16, cleared). Release `data` holds
 enforcementaircraft.json and SHA256SUMS. Live Track Aircraft and Live Track Enforcement Aircraft
 both read it through this module, so neither imports the other.
 
@@ -54,6 +54,11 @@ FEDERAL_KEY = "saw_federal_law_enforcement"
 SOURCED = "sourced"
 DETECTED = "detected_unconfirmed"
 CLEARED = "cleared"
+# ! ICE AIR CHARTER (backlog 313, 0.2.16; Lee 2026-10-28 23:5x): an airliner that flies ICE Air charters
+# and other work too. Between sourced and detected: watched like them, drawn with a look of its own.
+CHARTER = "ice_air_charter"
+# What a consumer watches nationwide and keeps past its cap: every status but cleared.
+WATCHED = (SOURCED, DETECTED, CHARTER)
 SCHEMA = 1
 
 REFRESH_S = 6 * 3600      # a good check holds this long
@@ -86,6 +91,9 @@ def parse(raw: bytes) -> tuple[dict[str, Entry], dict]:
     """The published file -> ({hex: Entry}, header). Raises ValueError on a file not of this shape.
 
     A row without a usable hex or status is skipped, not fatal: one bad row must not cost the rest.
+    ! A STATUS THIS READER DOES NOT KNOW IS INSTALLED AS GIVEN, so a list carrying a newer status never
+    breaks an older reader; its consumers filter by the statuses they know (measured on 0.2.15,
+    2026-10-29, before the list first carried ice_air_charter).
     """
     try:
         doc = json.loads(raw.decode("utf-8"))

@@ -250,5 +250,31 @@ class Shape(unittest.TestCase):
         self.assertNotIn("import aiohttp", src)
 
 
+class Charter(unittest.TestCase):
+    """0.2.16 (backlog 313): the ICE Air charter status."""
+    ROWS = ROWS + [{"hex": "A2C4E0", "status": "ice_air_charter", "entry": "charter-n278gx", "registration": "N278GX"}]
+
+    def test_names(self):
+        self.assertEqual(el.CHARTER, "ice_air_charter")
+        self.assertEqual(el.WATCHED, (el.SOURCED, el.DETECTED, el.CHARTER))
+
+    def test_parsed(self):
+        entries, _ = el.parse(doc(self.ROWS))
+        self.assertEqual(entries["a2c4e0"], el.Entry("a2c4e0", el.CHARTER, None, "charter-n278gx", "N278GX"))
+
+    def test_watched_not_sourced(self):
+        with tempfile.TemporaryDirectory() as d:
+            r = el.EnforcementList(os.path.join(d, el.CACHE_NAME))
+            r._install(doc(self.ROWS))
+        self.assertEqual(r.hexes(*el.WATCHED), frozenset({"a00808", "a1b2c3", "abc123", "a2c4e0"}))
+        self.assertEqual(r.status("A2C4E0"), el.CHARTER)
+        self.assertFalse(r.is_sourced("a2c4e0"))
+        self.assertNotIn("a2c4e0", r.sourced())
+
+    def test_unknown_status_is_installed(self):
+        entries, _ = el.parse(doc(ROWS + [{"hex": "aaaaaa", "status": "some_later_status"}]))
+        self.assertEqual(entries["aaaaaa"].status, "some_later_status")
+
+
 if __name__ == "__main__":
     unittest.main()

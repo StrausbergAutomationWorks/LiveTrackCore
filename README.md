@@ -164,7 +164,8 @@ dependencies, no Home Assistant import (0.2.11). Since 0.2.12 the lights take
 a mode: `True` pairs them with the fill (the blue wig-wag on the police white,
 the red/blue glow on any other), `"glow"` and `"wigwag"` say which, and the
 query carries it as `l=g` or `l=w`; `lights_from_query()` reads it back, the
-old `l=1` included.
+old `l=1` included. Since 0.2.16 `"charter"` (`LIGHTS_CHARTER`, `l=c`) draws a
+steady glow, blue inside and red outside, for an ICE Air charter airframe.
 
 ## `saw_livetrack.enforcement_list` - the EnforcementAircraft list
 
@@ -174,7 +175,10 @@ cache_path)` gives the one reader, `refresh(session)` checks `SHA256SUMS`
 first and fetches the list only when it changed, installing it only when its
 bytes match. A failure keeps the cached copy (`.storage/saw_enforcementaircraft.json`),
 which never expires. Lookups by Mode S hex: `status()`, `is_sourced()`,
-`hexes(*statuses)`. The consumer passes its own aiohttp session, made with
+`hexes(*statuses)`. Statuses: `SOURCED`, `DETECTED`, `CHARTER` (`ice_air_charter`,
+0.2.16: an airliner that flies ICE Air charters and other work too) and
+`CLEARED`; `WATCHED` is every one but cleared. A status the reader does not
+know is installed as given, so a newer list never breaks an older reader. The consumer passes its own aiohttp session, made with
 `SESSION_KWARGS` (GitHub's release redirect carries a header over aiohttp's
 default 8,190-byte limit). No Home Assistant import, no aiohttp import (0.2.12).
 
