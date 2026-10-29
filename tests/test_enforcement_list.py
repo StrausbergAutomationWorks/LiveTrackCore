@@ -257,6 +257,7 @@ class Charter(unittest.TestCase):
     def test_names(self):
         self.assertEqual(el.CHARTER, "ice_air_charter")
         self.assertEqual(el.WATCHED, (el.SOURCED, el.DETECTED, el.CHARTER))
+        self.assertEqual(el.CHARTER_LABEL, "ICE Air Charter?")
 
     def test_parsed(self):
         entries, _ = el.parse(doc(self.ROWS))

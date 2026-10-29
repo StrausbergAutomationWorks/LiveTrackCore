@@ -59,6 +59,9 @@ CLEARED = "cleared"
 CHARTER = "ice_air_charter"
 # What a consumer watches nationwide and keeps past its cap: every status but cleared.
 WATCHED = (SOURCED, DETECTED, CHARTER)
+# ! THE LABEL EVERY CONSUMER PRINTS FOR A CHARTER (Lee 2026-10-29 00:37 and 01:18, Live Track SALT and Live Track
+# Aircraft alike). The question mark is his: the airframe flies ICE Air charters; this flight may be other work.
+CHARTER_LABEL = "ICE Air Charter?"
 SCHEMA = 1
 
 REFRESH_S = 6 * 3600      # a good check holds this long
