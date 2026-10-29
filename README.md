@@ -222,6 +222,10 @@ shortened to 22 characters). `lookup_owner(hex)` gives any registration's title 
 withholds what 49 U.S.C. 44114 requires before it publishes; nothing is shipped. No Home Assistant
 import, no aiohttp import.
 
+## `saw_livetrack.airlines` - the airline behind a callsign
+
+`lookup_operator(callsign)` gives `(designator, operator name)` for an airline callsign (`UAL308` -> `("UAL", "United Airlines")`), `(None, "Private")` for a US registration. `airline_short(callsign)` gives the name a person reads on the map's hover, "United" in "United 1678", for a known designator followed by a flight number (7 characters at most): a single-brand regional by its brand (`ENY` -> American Eagle), a multi-brand one by its operator (SkyWest, Republic). `None` for a special callsign (TROY329, VELUX55) or a registration. A hand-kept table of about 160 designators; moved here from Live Track Aircraft in 0.2.17 so Live Track SALT reads the same one.
+
 ## Data attribution
 
 Train data is provided by **[Amtraker](https://amtraker.com)** and is licensed

@@ -65,6 +65,9 @@ Two submodules, deliberately separate:
                           once per instance, cached, checksum checked
                           (0.2.12); the ICE Air charter status (0.2.16).
                           NOT imported here; no dependencies.
+  airlines              the operator and the hover's short name by callsign
+                          (0.2.17; moved from Live Track Aircraft). NOT
+                          imported here; no dependencies.
   saw_livetrack.adsb_poll
                           One adsb.fi poll per instance for the aircraft
                           integrations: a union hex round a minute, shared
@@ -113,4 +116,4 @@ from .amtraker import (  # noqa: F401
     speed_kmh,
 )
 
-__version__ = "0.2.16"
+__version__ = "0.2.17"
