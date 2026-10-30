@@ -277,5 +277,46 @@ class Charter(unittest.TestCase):
         self.assertEqual(entries["aaaaaa"].status, "some_later_status")
 
 
+class IceAirCallsign(unittest.TestCase):
+    """0.2.18 (backlog 313 part 2): ICE Air's call signs mark the flight. Cases from the TYSON watch, 2026-10-29."""
+
+    def test_label(self):
+        self.assertEqual(el.CHARTER_FLIGHT_LABEL, "ICE Air Charter")
+        self.assertEqual(el.CHARTER_LABEL, el.CHARTER_FLIGHT_LABEL + "?")
+
+    def test_velux_seen_on_the_box(self):
+        for cs, hx in (("VELUX55", "ad563d"), ("VELUX21", "AD7274"), ("VELUX32", "a8b479"), ("VELUX46", "a2c4e0")):
+            self.assertEqual(el.ice_air_callsign(cs, hx), "VELUX", cs)
+
+    def test_tyson_and_tys(self):
+        self.assertEqual(el.ice_air_callsign("TYSON43", "a8b479"), "TYSON")
+        self.assertEqual(el.ice_air_callsign("TYSON51", "a8b479"), "TYSON")
+        self.assertEqual(el.ice_air_callsign("TYS44", "a8b479"), "TYS")
+        self.assertEqual(el.ice_air_callsign("TYS1", "a8b479"), "TYS")
+        self.assertEqual(el.ice_air_callsign("TYS1234", "a8b479"), "TYS")
+
+    def test_trumps_757_never(self):
+        self.assertIsNone(el.ice_air_callsign("TYSON1", "aa3410"))
+        self.assertIsNone(el.ice_air_callsign("TYSON12", "AA3410"))   # the hex alone excludes it
+        self.assertIsNone(el.ice_air_callsign("TYSON1", "a8b479"))    # one digit is not the ICE form
+
+    def test_us_hex_only(self):
+        self.assertIsNone(el.ice_air_callsign("TYS44", "e48a31"))     # Brazil: TransHolding's TYS
+        self.assertIsNone(el.ice_air_callsign("VELUX21", "c03a11"))   # Canada
+        self.assertEqual(el.ice_air_callsign("VELUX21", "a00000"), "VELUX")
+        self.assertEqual(el.ice_air_callsign("VELUX21", "afffff"), "VELUX")
+        self.assertIsNone(el.ice_air_callsign("VELUX21", "b00000"))
+        self.assertIsNone(el.ice_air_callsign("VELUX21", "~a2c4e0"))  # TIS-B, not a Mode S address
+        self.assertIsNone(el.ice_air_callsign("VELUX21", None))
+
+    def test_carrier_designators_and_oddities_are_not_evidence(self):
+        for cs in ("GXA6276", "GXA201", "BBQ3501", "GXAUX41", "UX23", "VELUX", "VELUX1", "VELUX123", "TYSON",
+                   "TYSON123", "TYS12345", "TROY704", "", None):
+            self.assertIsNone(el.ice_air_callsign(cs, "a8b479"), cs)
+
+    def test_case_and_padding(self):
+        self.assertEqual(el.ice_air_callsign(" velux21 ", "ad7274"), "VELUX")
+
+
 if __name__ == "__main__":
     unittest.main()

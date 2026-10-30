@@ -178,7 +178,12 @@ which never expires. Lookups by Mode S hex: `status()`, `is_sourced()`,
 `hexes(*statuses)`. Statuses: `SOURCED`, `DETECTED`, `CHARTER` (`ice_air_charter`,
 0.2.16: an airliner that flies ICE Air charters and other work too) and
 `CLEARED`; `WATCHED` is every one but cleared, and `CHARTER_LABEL` ("ICE Air Charter?") is the
-label every consumer prints for a charter. A status the reader does not
+label every consumer prints for a charter. `ice_air_callsign(callsign, hex)` (0.2.18) says
+whether THIS flight broadcasts ICE Air's call sign: `"VELUX"` (VELUX + 2 digits), `"TYSON"`
+(TYSON + 2 digits) or `"TYS"` (TYS + 1-4 digits), on a US Mode S address only (A00000-AFFFFF) and
+never for AA3410, else `None`; a carrier's own designator (GXA, BBQ) says nothing either way. While
+it does, a consumer prints `CHARTER_FLIGHT_LABEL` ("ICE Air Charter"), without the question
+mark. Per flight only: it says nothing about the airframe's next flight. A status the reader does not
 know is installed as given, so a newer list never breaks an older reader. The consumer passes its own aiohttp session, made with
 `SESSION_KWARGS` (GitHub's release redirect carries a header over aiohttp's
 default 8,190-byte limit). No Home Assistant import, no aiohttp import (0.2.12).

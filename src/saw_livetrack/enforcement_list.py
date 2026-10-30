@@ -62,6 +62,40 @@ WATCHED = (SOURCED, DETECTED, CHARTER)
 # ! THE LABEL EVERY CONSUMER PRINTS FOR A CHARTER (Lee 2026-10-29 00:37 and 01:18, Live Track SALT and Live Track
 # Aircraft alike). The question mark is his: the airframe flies ICE Air charters; this flight may be other work.
 CHARTER_LABEL = "ICE Air Charter?"
+# ! ICE AIR'S CALL SIGNS (backlog 313 part 2, 0.2.18; Lee 2026-10-29 22:25-23:10). A flight broadcasting one of
+# these IS an ICE Air flight, whatever the airframe: the label loses its question mark for that flight.
+#   VELUX + 2 digits: sourced. ICE Flight Monitor names Velux16, 23, 24 and 35 as ICE Air flights (2026-10-22 to
+#     10-29), on charters and on DHS's own aircraft; the box saw nine charter tails of both contractors fly it.
+#   TYSON + 2 digits: VELUX's documented predecessor (TYSON43 on ADS-B; TYSON51/52 on N660CP's ICE legs).
+#   TYS + 1-4 digits: the same flights' short form (King County's log, TYSON 44 in and TYS 44 out).
+# US hexes only (A00000-AFFFFF): TYS is also TransHolding System's ICAO designator (Brazil). Never AA3410: N757AF,
+# Trump's 757, flies as TYSON1. A carrier's own designator (GXA, BBQ) is evidence of NOTHING either way: ICE Air
+# removals have flown as GXA6276 and GXA6278. Record: Live Track SALT SSOT section 3.
+ICE_AIR_CALLSIGNS = (
+    ("VELUX", re.compile(r"^VELUX\d{2}$")),
+    ("TYSON", re.compile(r"^TYSON\d{2}$")),
+    ("TYS", re.compile(r"^TYS\d{1,4}$")),
+)
+# The label every consumer prints while a flight broadcasts one of them (Lee 2026-10-29 22:25, decision 1).
+CHARTER_FLIGHT_LABEL = "ICE Air Charter"
+NEVER_ICE_AIR = frozenset({"aa3410"})
+_US_HEX = (0xA00000, 0xAFFFFF)
+
+
+def ice_air_callsign(callsign, hex_id) -> str | None:
+    """The family ("VELUX", "TYSON" or "TYS") when this flight broadcasts ICE Air's call sign, else None.
+
+    Per flight only: it says nothing about the airframe's next flight. None for a non-US hex or AA3410."""
+    h = norm_hex(hex_id)
+    if h is None or h in NEVER_ICE_AIR or not (_US_HEX[0] <= int(h, 16) <= _US_HEX[1]):
+        return None
+    cs = str(callsign or "").strip().upper()
+    for family, pattern in ICE_AIR_CALLSIGNS:
+        if pattern.match(cs):
+            return family
+    return None
+
+
 SCHEMA = 1
 
 REFRESH_S = 6 * 3600      # a good check holds this long
