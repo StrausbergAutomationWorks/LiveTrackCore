@@ -211,6 +211,23 @@ it draws (`claim`) so another can leave them alone (`claimed_by_others`). The
 circle's sources are the caller's choice; the hex request goes to adsb.fi
 only. No Home Assistant import, no aiohttp import (0.2.13).
 
+## `saw_livetrack.ais` and `saw_livetrack.aisstream` - AIS, once per instance
+
+`saw_livetrack.ais` is the shape every AIS source yields (`Observation`, units in the field names, None
+for anything a transmitter left unavailable), the rate-of-turn decode (`rot_to_dps`), what a transmitter
+is (`object_kind`: vessel, net buoy, aid to navigation, base station, SAR aircraft, distress beacon) and the
+MMSI join table for static data (`StaticCache`). Moved from Live Track Ships in 0.2.19.
+
+`saw_livetrack.aisstream` reads [aisstream.io](https://aisstream.io) through one client per Home
+Assistant instance (`shared(hass.data)`). aisstream gives each connection one subscription, and an MMSI
+filter applies to every box in it, so the client holds at most two connections per API key: an AREA
+subscription, the union of every area consumer's boxes (`add_area`), and a VESSELS subscription, the
+union of every list consumer's MMSIs, at most 200 (`add_vessels`). Each observation goes to the consumers
+whose boxes hold it (and whose list names it), labelled with that consumer's domain. A change of
+consumers replaces the subscription on the open connection, at most once a second; the last consumer of
+a connection closes it. Static messages feed one `StaticCache` (`client.statics`). Each user brings their
+own aisstream API key. No Home Assistant import; aiohttp only when it connects (0.2.19).
+
 ## `saw_livetrack.faa_registry` - the FAA registry, once per instance
 
 The FAA's [Releasable Aircraft Database](https://registry.faa.gov/database/ReleasableAircraft.zip),
@@ -259,6 +276,9 @@ Aircraft positions (`saw_livetrack.adsb_poll`) are from **[adsb.fi](https://adsb
 and from **[adsb.lol](https://adsb.lol)** (ODbL v1.0) where a consumer asks it;
 each consumer credits the feeds it uses.
 
+Vessel positions (`saw_livetrack.aisstream`) are from **[aisstream.io](https://aisstream.io)**, which
+publishes no terms of use; each consumer credits it.
+
 ## Disclaimer
 
 Independent project. Not affiliated with, endorsed by or connected to Amtrak,
@@ -278,6 +298,7 @@ python tests/test_aircraft_icons.py
 python -m unittest discover -s tests -p "test_gtfs_*.py"
 python -m unittest discover -s tests -p "test_enforcement_list.py"
 python -m unittest tests.test_adsb_poll
+python -m unittest tests.test_aisstream
 python -m unittest tests.test_zones
 ```
 
