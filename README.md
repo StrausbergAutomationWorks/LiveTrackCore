@@ -243,6 +243,13 @@ which never expires. Lookups by MMSI: `vessel()` (status, name, agency, the entr
 box where the list says the work happens, if any. A status the reader does not know is installed as given.
 No Home Assistant import, no aiohttp import (0.2.20; moved from Live Track SALT).
 
+The look of a listed vessel, the same for every integration that draws one (0.2.21; moved from Live Track
+Ships): `listed(reader, mmsi)` (the row, unless cleared), `label(v)` (the entry's short form, else the agency,
+else "Listed vessel", at most 22 characters), `name(v, ais_name)` and `operator_short(v)` for the hover's first
+line, `attributes(v, ais_name)` (unknown values omitted), `lights(v)` (the glow on a sourced row), `LIST_TONE`
+(`"mil"`, the Coast Guard's army green in `saw_livetrack.aircraft_icons`) and `attribution(base)`, the
+source's credit followed by the list's ODbL line (`LIST_ATTRIBUTION`). The picture stays the integration's.
+
 ## `saw_livetrack.faa_registry` - the FAA registry, once per instance
 
 The FAA's [Releasable Aircraft Database](https://registry.faa.gov/database/ReleasableAircraft.zip),

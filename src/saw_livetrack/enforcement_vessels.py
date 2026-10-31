@@ -272,3 +272,71 @@ def shared_list(store: dict, cache_path: str) -> VesselList:
         reader = store[STORE_KEY] = VesselList(cache_path)
     return reader
 
+# ------------------------------------------------------------------------------------------------------------
+# THE LOOK OF A LISTED VESSEL (0.2.21, backlog 315; Lee 2026-10-30 22:15): the label, the hover's name and agency
+# (06_MAP_CONTRACT.md D4b rules 12 and 14), the attributes and the credit, for every integration that draws a
+# vessel on the list. COPIED BY SPAN from Live Track Ships' enforcement.py at c712ba6, which had copied it from
+# Live Track SALT's VesselTracker.record: two consumers, so it lives here (rule 2). Only the `ev.` prefix was
+# dropped. The picture itself stays each integration's: Ships draws its own silhouette, SALT a generic hull.
+
+# saw_livetrack.aircraft_icons' "mil": army green, the military and the Coast Guard (tests pin the two equal).
+LIST_TONE = "mil"
+LIST_LIGHTS = "glow"            # the sourced red/blue glow (saw_livetrack.aircraft_icons LIGHTS_GLOW)
+MAX_LABEL_CHARS = 22            # SALT's tracker.MAX_LABEL_CHARS: one label rule for aircraft and vessels
+OPERATOR_SHORT_MAX = 22         # 06_MAP_CONTRACT.md D4b rule 12
+LIST_ATTRIBUTION = ("Contains information from EnforcementVessels "
+                    "(https://github.com/StrausbergAutomationWorks/EnforcementVessels), "
+                    "which is made available under the Open Database License (ODbL) v1.0")
+
+
+def listed(reader, identity) -> Vessel | None:
+    """The list's row for this MMSI when it is listed and not cleared, else None. No reader, no listing."""
+    if reader is None:
+        return None
+    v = reader.vessel(identity)
+    return v if v is not None and v.status != CLEARED else None
+
+
+def lights(v: Vessel) -> str | None:
+    """The glow on a SOURCED entry only, as SALT draws it."""
+    return LIST_LIGHTS if v.status == SOURCED else None
+
+
+def _text(value) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _cut(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def label(v: Vessel) -> str:
+    """The marker's label: the entry's short form, else the agency, else "Listed vessel"."""
+    return _cut(_text(v.short) or _text(v.agency) or "Listed vessel", MAX_LABEL_CHARS)
+
+
+def name(v: Vessel, ais_name) -> str | None:
+    """The hover's name: the list's, else what the vessel broadcasts; None when neither."""
+    return _text(v.name) or _text(ais_name) or None
+
+
+def operator_short(v: Vessel) -> str | None:
+    """The hover's agency: the entry's short form, else the agency, at most 22 characters; None when neither."""
+    op = _text(v.short) or _text(v.agency)
+    return _cut(op, OPERATOR_SHORT_MAX) if op else None
+
+
+def attributes(v: Vessel, ais_name) -> dict:
+    """What a listed vessel adds to its entity, as SALT publishes it. Unknown values omitted (D0)."""
+    out = {"enforcement_status": v.status}
+    for key, value in (("enforcement_agency", v.agency), ("enforcement_entry", v.entry), ("hull", v.hull),
+                       ("list_name", _text(v.name) or None), ("name", name(v, ais_name)),
+                       ("operator_short", operator_short(v))):
+        if value:
+            out[key] = value
+    return out
+
+
+def attribution(base: str | None) -> str:
+    """The source's credit, then the list's."""
+    return (base + "; " + LIST_ATTRIBUTION) if base else LIST_ATTRIBUTION

@@ -90,7 +90,9 @@ Two submodules, deliberately separate:
                           The public EnforcementVessels list (ODbL) and its
                           theatres, read once per instance, cached,
                           checksum checked (0.2.20; moved from Live Track
-                          SALT). NOT imported here; no dependencies.
+                          SALT); the look of a listed vessel
+                          (0.2.21; moved from Live Track Ships). NOT
+                          imported here; no dependencies.
   saw_livetrack.faa_registry
                           The FAA registry for the aircraft integrations,
                           once per instance: government registrants with
@@ -133,4 +135,4 @@ from .amtraker import (  # noqa: F401
     speed_kmh,
 )
 
-__version__ = "0.2.20"
+__version__ = "0.2.21"

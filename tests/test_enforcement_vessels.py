@@ -211,5 +211,83 @@ class Refresh(unittest.TestCase):
         self.assertFalse(V.VesselList(path + ".none").load_cache())
 
 
+class Look(unittest.TestCase):
+    """0.2.21: the look of a listed vessel, moved from Live Track Ships' enforcement.py with its checks."""
+
+    DOC = {"name": "EnforcementVessels", "schema": 1, "built": "b", "license": "ODbL-1.0",
+           "theatres": [{"id": "s", "name": "Southern California", "box": [34.5, -121.0, 32.0, -117.0]}],
+           "entries": [{"id": "uscg-wpc", "short": "USCG"}],
+           "vessels": [{"mmsi": "338926432", "name": "USCGC Benjamin Bottoms (WPC 1132)", "agency": "US Coast Guard",
+                        "hull": "WPC 1132", "entry": "uscg-wpc", "status": "sourced"},
+                       {"mmsi": "366999662", "name": "USCGC Halibut", "agency": "US Coast Guard", "entry": "uscg-x",
+                        "status": "newstatus"},
+                       {"mmsi": "366999999", "name": "Gone", "agency": "US Coast Guard", "status": "cleared"},
+                       {"mmsi": "367000001", "status": "sourced"}]}
+
+    def setUp(self):
+        self.r = V.VesselList(os.path.join(tempfile.mkdtemp(), V.CACHE_NAME))
+        self.r._install(json.dumps(self.DOC).encode())
+        self.bb = V.listed(self.r, "338926432")
+        self.hal = V.listed(self.r, "366999662")
+        self.bare = V.listed(self.r, "367000001")
+
+    def test_listed(self):
+        self.assertEqual(self.bb.mmsi, "338926432")
+        self.assertIsNone(V.listed(self.r, "366999999"))          # cleared
+        self.assertIsNone(V.listed(self.r, "211000000"))          # not on the list
+        self.assertIsNone(V.listed(None, "338926432"))            # no reader, no listing
+        self.assertIsNotNone(self.hal)                             # a status the reader does not know is listed
+
+    def test_lights(self):
+        self.assertEqual(V.lights(self.bb), "glow")
+        self.assertIsNone(V.lights(self.hal))
+        self.assertEqual(V.LIST_LIGHTS, "glow")
+
+    def test_label_name_operator(self):
+        self.assertEqual(V.label(self.bb), "USCG")
+        self.assertEqual(V.label(self.hal), "US Coast Guard")
+        self.assertEqual(V.label(self.bare), "Listed vessel")
+        self.assertEqual(V.name(self.bb, "CG BOTTOMS"), "USCGC Benjamin Bottoms (WPC 1132)")
+        self.assertEqual(V.name(self.bare, "  CG NONAME "), "CG NONAME")
+        self.assertIsNone(V.name(self.bare, "  "))
+        self.assertIsNone(V.name(self.bare, None))
+        self.assertEqual(V.operator_short(self.bb), "USCG")
+        self.assertEqual(V.operator_short(self.hal), "US Coast Guard")
+        self.assertIsNone(V.operator_short(self.bare))
+        long_v = V.Vessel("367000002", "sourced", "X", "Customs and Border Protection Air and Marine")
+        self.assertEqual(V.operator_short(long_v), "Customs and Border Pr\u2026")
+        self.assertEqual(V.label(long_v), "Customs and Border Pr\u2026")
+        self.assertEqual(len(V.label(long_v)), V.MAX_LABEL_CHARS)
+        exact = V.Vessel("367000003", "sourced", "X", "A" * 22)
+        self.assertEqual(V.label(exact), "A" * 22)                 # 22 is kept whole
+        self.assertEqual(V.operator_short(exact), "A" * 22)
+        self.assertEqual((V.MAX_LABEL_CHARS, V.OPERATOR_SHORT_MAX), (22, 22))
+
+    def test_attributes(self):
+        self.assertEqual(V.attributes(self.bb, "CG BOTTOMS"), {
+            "enforcement_status": "sourced", "enforcement_agency": "US Coast Guard",
+            "enforcement_entry": "uscg-wpc", "hull": "WPC 1132",
+            "list_name": "USCGC Benjamin Bottoms (WPC 1132)",
+            "name": "USCGC Benjamin Bottoms (WPC 1132)", "operator_short": "USCG"})
+        self.assertEqual(sorted(V.attributes(self.bare, None)), ["enforcement_status"])
+        self.assertEqual(V.attributes(self.bare, "CG X")["name"], "CG X")
+
+    def test_attributes_edges(self):
+        """Mutation run 1: an empty string is unknown too, and the list name is published stripped."""
+        blank = V.Vessel("367000004", "sourced", name="  USCGC Padded  ", agency="", hull="", entry="")
+        a = V.attributes(blank, None)
+        self.assertEqual(a, {"enforcement_status": "sourced", "list_name": "USCGC Padded", "name": "USCGC Padded"})
+
+    def test_attribution_and_tone(self):
+        self.assertEqual(V.attribution("Data: aisstream.io"), "Data: aisstream.io; " + V.LIST_ATTRIBUTION)
+        self.assertEqual(V.attribution(None), V.LIST_ATTRIBUTION)
+        self.assertEqual(V.attribution(""), V.LIST_ATTRIBUTION)
+        self.assertIn("Open Database License (ODbL) v1.0", V.LIST_ATTRIBUTION)
+        self.assertIn("https://github.com/StrausbergAutomationWorks/EnforcementVessels", V.LIST_ATTRIBUTION)
+        from saw_livetrack import aircraft_icons as AI
+        self.assertEqual(V.LIST_TONE, "mil")
+        self.assertIn(V.LIST_TONE, AI._TONES)
+
+
 if __name__ == "__main__":
     unittest.main()
