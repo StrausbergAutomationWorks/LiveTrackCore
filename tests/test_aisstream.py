@@ -393,5 +393,86 @@ class TestDispatch(Base):
         self.assertEqual(sorted(c["kind"] for c in self.c.status()["connections"]), [A.AREA, A.VESSELS])
 
 
+class TestClaims(Base):
+    """0.2.20 (backlog 315 task 5): as on adsb_poll, each consumer says what it draws; another skips it."""
+
+    async def test_claimed_by_others_excludes_your_own(self):
+        self.c.claim("live_track_ships:a", ["367269000", "338926432"])
+        self.c.claim("live_track_ships:b", ["366000001"])
+        self.c.claim("salt", ["367269000"])
+        self.assertEqual(self.c.claimed_by_others("salt"), frozenset({"367269000", "338926432", "366000001"}))
+        self.assertEqual(self.c.claimed_by_others("live_track_ships:a"), frozenset({"366000001", "367269000"}))
+        self.assertEqual(self.c.claimed_by_others("nobody"),
+                         frozenset({"367269000", "338926432", "366000001"}))
+
+    async def test_a_claim_replaces_the_last(self):
+        self.c.claim("ships", ["367269000"])
+        self.c.claim("ships", ["338926432"])
+        self.assertEqual(self.c.claimed_by_others("salt"), frozenset({"338926432"}))
+        self.c.claim("ships", [])
+        self.assertEqual(self.c.claimed_by_others("salt"), frozenset())
+
+    async def test_claims_are_normalised(self):
+        self.c.claim("ships", [367269000, " 338926432 ", "12345", "36726900x", None])
+        self.assertEqual(self.c.claimed_by_others("salt"), frozenset({"367269000", "338926432"}))
+
+    async def test_release_and_remove_drop_claims(self):
+        self.c.claim("ships", ["367269000"])
+        self.c.release("ships")
+        self.assertEqual(self.c.claimed_by_others("salt"), frozenset())
+        self.area("ships", FLORIDA)
+        self.c.claim("ships", ["367269000"])
+        self.c.claim("other", ["366000001"])
+        await self.c.remove("ships")
+        self.assertEqual(self.c.claimed_by_others("salt"), frozenset({"366000001"}))
+        await self.c.remove("other")                      # a claimer that never subscribed: its claims go too
+        self.assertEqual(self.c.claimed_by_others("salt"), frozenset())
+
+    async def test_claims_change_no_subscription(self):
+        self.vessels("salt", ["367269000"])
+        await settle()
+        ws = self.s.sockets[0]
+        self.c.claim("ships", ["367269000"])
+        await settle()
+        self.assertEqual(len(ws.sent), 1)
+        await ws.q.put(position("367269000", 25.0, -80.0))
+        await settle()
+        self.assertEqual(len(self.got["salt"]), 1)       # delivery is unchanged: skipping is the consumer's choice
+
+    async def test_status_counts_claims(self):
+        self.c.claim("ships", ["367269000", "338926432"])
+        self.c.claim("salt", [])
+        self.assertEqual(self.c.status()["claims"], {"salt": 0, "ships": 2})
+
+
+class TestEmptyList(Base):
+    """0.2.20: a VESSELS consumer with no valid MMSI is refused: an empty FiltersShipMMSI would be no filter."""
+
+    async def test_add_refused(self):
+        for mmsis in ([], None, ["12345", "x"]):
+            with self.assertRaises(ValueError):
+                self.vessels("salt", mmsis)
+            self.assertNotIn("salt", self.c._consumers)
+        await settle()
+        self.assertEqual(self.s.sockets, [])
+        self.assertEqual(self.c.status()["connections"], [])
+
+    async def test_update_to_empty_refused_and_list_kept(self):
+        self.vessels("salt", ["367269000"])
+        await settle()
+        with self.assertRaises(ValueError):
+            self.c.update("salt", mmsis=[])
+        self.assertEqual(self.c._consumers["salt"].mmsis, frozenset({"367269000"}))
+        self.c.update("salt", boxes=FLORIDA)              # no new list: the old one stands
+        await settle()
+        self.assertEqual(self.s.sockets[0].sent[-1]["FiltersShipMMSI"], ["367269000"])
+
+    async def test_area_needs_no_list(self):
+        self.area("ships", FLORIDA)
+        self.c.update("ships", boxes=CHICAGO)
+        await settle()
+        self.assertNotIn("FiltersShipMMSI", self.s.sockets[0].sent[-1])
+
+
 if __name__ == "__main__":
     unittest.main()

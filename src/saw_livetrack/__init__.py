@@ -83,8 +83,14 @@ Two submodules, deliberately separate:
                           One aisstream.io client per instance: at most two
                           connections per API key, an AREA and a VESSELS
                           subscription, dispatch by box and MMSI, Ships'
-                          parser (0.2.19). NOT imported here; aiohttp
+                          parser (0.2.19); claims, and no empty VESSELS
+                          list (0.2.20). NOT imported here; aiohttp
                           imported only when it connects.
+  saw_livetrack.enforcement_vessels
+                          The public EnforcementVessels list (ODbL) and its
+                          theatres, read once per instance, cached,
+                          checksum checked (0.2.20; moved from Live Track
+                          SALT). NOT imported here; no dependencies.
   saw_livetrack.faa_registry
                           The FAA registry for the aircraft integrations,
                           once per instance: government registrants with
@@ -127,4 +133,4 @@ from .amtraker import (  # noqa: F401
     speed_kmh,
 )
 
-__version__ = "0.2.19"
+__version__ = "0.2.20"

@@ -228,6 +228,21 @@ consumers replaces the subscription on the open connection, at most once a secon
 a connection closes it. Static messages feed one `StaticCache` (`client.statics`). Each user brings their
 own aisstream API key. No Home Assistant import; aiohttp only when it connects (0.2.19).
 
+Each consumer says which vessels it draws (`claim`) so another can leave them alone (`claimed_by_others`;
+`release`, and `remove` drops a consumer's claims), as on `adsb_poll`. A VESSELS consumer with no valid MMSI
+is refused, since aisstream would read an empty MMSI filter as none at all (0.2.20).
+
+## `saw_livetrack.enforcement_vessels` - the EnforcementVessels list
+
+Reads the public [EnforcementVessels](https://github.com/StrausbergAutomationWorks/EnforcementVessels)
+list (release `data`) once per Home Assistant instance: `shared_list(hass.data, cache_path)` gives the one
+reader, `refresh(session)` checks `SHA256SUMS` first and fetches the list only when it changed, installing
+it only when its bytes match. A failure keeps the cached copy (`.storage/saw_enforcementvessels.json`),
+which never expires. Lookups by MMSI: `vessel()` (status, name, agency, the entry's short form, hull) and
+`watched()` (every MMSI not cleared: what a VESSELS subscription asks for); `theatre(lat, lon)` gives the
+box where the list says the work happens, if any. A status the reader does not know is installed as given.
+No Home Assistant import, no aiohttp import (0.2.20; moved from Live Track SALT).
+
 ## `saw_livetrack.faa_registry` - the FAA registry, once per instance
 
 The FAA's [Releasable Aircraft Database](https://registry.faa.gov/database/ReleasableAircraft.zip),
@@ -272,6 +287,11 @@ information from **[EnforcementAircraft](https://github.com/StrausbergAutomation
 which is made available under the
 [Open Database License (ODbL) v1.0](https://opendatacommons.org/licenses/odbl/1-0/).
 
+The enforcement-vessels list (`saw_livetrack.enforcement_vessels`) contains
+information from **[EnforcementVessels](https://github.com/StrausbergAutomationWorks/EnforcementVessels)**,
+which is made available under the
+[Open Database License (ODbL) v1.0](https://opendatacommons.org/licenses/odbl/1-0/).
+
 Aircraft positions (`saw_livetrack.adsb_poll`) are from **[adsb.fi](https://adsb.fi)**,
 and from **[adsb.lol](https://adsb.lol)** (ODbL v1.0) where a consumer asks it;
 each consumer credits the feeds it uses.
@@ -299,6 +319,7 @@ python -m unittest discover -s tests -p "test_gtfs_*.py"
 python -m unittest discover -s tests -p "test_enforcement_list.py"
 python -m unittest tests.test_adsb_poll
 python -m unittest tests.test_aisstream
+python -m unittest tests.test_enforcement_vessels
 python -m unittest tests.test_zones
 ```
 

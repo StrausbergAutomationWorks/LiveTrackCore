@@ -11,6 +11,11 @@ Each observation goes to the consumers whose boxes hold it (and, for a list cons
 re-labelled with that consumer's domain. A change of consumers REPLACES the subscription on the open socket,
 paced REPLACE_PACE_S apart (a faster update closes the connection). The last consumer of a connection closes it.
 
+CLAIMS (0.2.20, backlog 315 task 5): each consumer says which vessels it draws (claim) and another leaves them
+alone (claimed_by_others), as on saw_livetrack.adsb_poll: Live Track Ships draws a listed vessel itself with the
+list's look, so Live Track SALT skips it. One vessel, one marker.
+! A VESSELS CONSUMER WITH NO MMSI IS REFUSED (0.2.20): an empty FiltersShipMMSI would be no filter at all.
+
 ! THE PARSER IS MOVED VERBATIM from Live Track Ships' sources/aisstream.py at ccebaee: its constants, _clean,
 _parse_time and the methods of Parser. The connection keeps that file's heartbeat, backoff with jitter, binary
 frames and refusal handling; what is new is the sharing around it. Static messages feed ONE StaticCache per
@@ -285,6 +290,13 @@ def _norm_mmsis(mmsis) -> frozenset:
     return frozenset(out)
 
 
+def _refuse_empty(consumer, mmsis) -> None:
+    """! NEVER AN EMPTY FILTER (0.2.20): aisstream would read an empty FiltersShipMMSI as no filter at all, the whole
+    world unfiltered (inferred, not measured). A list consumer with nothing to ask for removes itself instead."""
+    if not mmsis:
+        raise ValueError(f"aisstream consumer {consumer}: a VESSELS subscription needs at least one MMSI")
+
+
 class _Consumer:
     def __init__(self, name, kind, key, boxes, mmsis, deliver, domain):
         self.name, self.kind, self.key = name, kind, key
@@ -454,6 +466,7 @@ class Client:
         self.statics = StaticCache()
         self._consumers: dict[str, _Consumer] = {}
         self._conns: dict[tuple, _Conn] = {}
+        self._claims: dict[str, frozenset] = {}     # consumer -> MMSIs it draws (0.2.20)
 
     # --- consumers ------------------------------------------------------------
     def add_area(self, consumer: str, session, api_key: str, boxes, deliver: Callable[[Observation], Any],
@@ -464,7 +477,8 @@ class Client:
 
     def add_vessels(self, consumer: str, session, api_key: str, mmsis, deliver: Callable[[Observation], Any],
                     domain: str, boxes=None, create_task=None) -> None:
-        """Only these MMSIs, inside boxes (the whole world when none are given)."""
+        """Only these MMSIs, inside boxes (the whole world when none are given). A list with no valid MMSI is
+        refused (ValueError): an empty filter would be none."""
         self._add(_Consumer(consumer, VESSELS, api_key, _norm_boxes(boxes or [WORLD]), _norm_mmsis(mmsis),
                             deliver, domain), session, create_task)
 
@@ -474,6 +488,7 @@ class Client:
         new_boxes = _norm_boxes(boxes) if boxes is not None else c.boxes
         new_mmsis = _norm_mmsis(mmsis) if mmsis is not None else c.mmsis
         if c.kind == VESSELS:
+            _refuse_empty(consumer, new_mmsis)
             self._check_cap(c.key, consumer, new_mmsis)
         c.boxes, c.mmsis = new_boxes, new_mmsis
         conn = self._conns.get((c.key, c.kind))
@@ -481,7 +496,8 @@ class Client:
             conn.changed()
 
     async def remove(self, consumer: str) -> None:
-        """A consumer unloading. The last one on a connection closes it."""
+        """A consumer unloading. The last one on a connection closes it. Its claims go too."""
+        self._claims.pop(consumer, None)
         c = self._consumers.pop(consumer, None)
         if c is None:
             return
@@ -493,6 +509,22 @@ class Client:
             return
         del self._conns[(c.key, c.kind)]
         await conn.stop()
+
+    # --- claims (0.2.20) ------------------------------------------------------
+    def claim(self, consumer: str, mmsis) -> None:
+        """What this consumer draws now; another consumer skips these. An empty set claims nothing."""
+        self._claims[consumer] = _norm_mmsis(mmsis)
+
+    def claimed_by_others(self, consumer: str) -> frozenset:
+        out: set = set()
+        for who, m in self._claims.items():
+            if who != consumer:
+                out |= m
+        return frozenset(out)
+
+    def release(self, consumer: str) -> None:
+        """A consumer's claims go (remove() does this too)."""
+        self._claims.pop(consumer, None)
 
     def _check_cap(self, key, consumer, mmsis) -> None:
         union = set(mmsis)
@@ -507,6 +539,7 @@ class Client:
         if c.name in self._consumers:
             raise ValueError(f"consumer {c.name} already added")
         if c.kind == VESSELS:
+            _refuse_empty(c.name, c.mmsis)
             self._check_cap(c.key, c.name, c.mmsis)
         self._consumers[c.name] = c
         conn = self._conns.get((c.key, c.kind))
@@ -548,7 +581,8 @@ class Client:
         """Low-cardinality state for a sensor attribute. Never the key."""
         return {"connections": [{"kind": k[1], "status": c.status, "connects": c.connects,
                                   "subscriptions_sent": c.subscriptions_sent} for k, c in self._conns.items()],
-                "consumers": sorted(self._consumers), "statics": len(self.statics)}
+                "consumers": sorted(self._consumers), "statics": len(self.statics),
+                "claims": {k: len(v) for k, v in sorted(self._claims.items())}}
 
 
 def shared(store: dict) -> Client:
