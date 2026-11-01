@@ -310,12 +310,35 @@ class IceAirCallsign(unittest.TestCase):
         self.assertIsNone(el.ice_air_callsign("VELUX21", None))
 
     def test_carrier_designators_and_oddities_are_not_evidence(self):
-        for cs in ("GXA6276", "GXA201", "BBQ3501", "GXAUX41", "UX23", "VELUX", "VELUX1", "VELUX123", "TYSON",
+        for cs in ("GXA6276", "GXA201", "BBQ3501", "VELUX", "VELUX1", "VELUX123", "TYSON",
                    "TYSON123", "TYS12345", "TROY704", "", None):
             self.assertIsNone(el.ice_air_callsign(cs, "a8b479"), cs)
 
     def test_case_and_padding(self):
         self.assertEqual(el.ice_air_callsign(" velux21 ", "ad7274"), "VELUX")
+
+    def test_ux_forms_seen_by_the_watch(self):
+        # 0.2.22 (Lee 2026-10-31 22:49): the flight number UX + 2 digits, as VELUX, GXAUX or bare (TYSON watch,
+        # 2026-10-29 to 10-31). The family is the prefix as broadcast.
+        for cs, hx, fam in (("GXAUX23", "a365c9", "GXAUX"), ("GXAUX42", "a83f98", "GXAUX"), ("GXAUX41", "ab7437", "GXAUX"),
+                            ("UX21", "a2f016", "UX"), ("UX23", "a8b479", "UX"), ("VELUX23", "a365c9", "VELUX")):
+            self.assertEqual(el.ice_air_callsign(cs, hx), fam, cs)
+        self.assertEqual(el.ice_air_callsign(" gxaux23 ", "a365c9"), "GXAUX")
+        self.assertEqual(el.ice_air_callsign("ux21", "a2f016"), "UX")
+
+    def test_ux_forms_us_hex_only(self):
+        self.assertIsNone(el.ice_air_callsign("UX21", "3453c4"))      # Spain: UX is Air Europa's IATA code
+        self.assertIsNone(el.ice_air_callsign("GXAUX23", "c03a11"))   # Canada
+        self.assertIsNone(el.ice_air_callsign("UX21", "aa3410"))
+        self.assertEqual(el.ice_air_callsign("UX21", "a00000"), "UX")
+        self.assertEqual(el.ice_air_callsign("GXAUX21", "afffff"), "GXAUX")
+        self.assertIsNone(el.ice_air_callsign("UX21", "b00000"))
+        self.assertIsNone(el.ice_air_callsign("GXAUX21", None))
+
+    def test_ux_oddities(self):
+        for cs in ("UX", "UX1", "UX123", "GXAUX", "GXAUX1", "GXAUX123", "AEAUX21", "GXUX21", "XUX21", "VELUXX21",
+                   "UX21A", "GXA UX21", "VELGXAUX21"):
+            self.assertIsNone(el.ice_air_callsign(cs, "a8b479"), cs)
 
 
 if __name__ == "__main__":

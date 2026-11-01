@@ -71,8 +71,16 @@ CHARTER_LABEL = "ICE Air Charter?"
 # US hexes only (A00000-AFFFFF): TYS is also TransHolding System's ICAO designator (Brazil). Never AA3410: N757AF,
 # Trump's 757, flies as TYSON1. A carrier's own designator (GXA, BBQ) is evidence of NOTHING either way: ICE Air
 # removals have flown as GXA6276 and GXA6278. Record: Live Track SALT SSOT section 3.
+#   GXAUX or UX + 2 digits (0.2.22; Lee 2026-10-31 22:49): the flight number is UX + 2 digits, and the flight-ID
+#     field carries it as VELUX, GXAUX (GlobalX's designator in front) or bare. Measured by the TYSON watch,
+#     2026-10-29 to 10-31: VELUX23 out and GXAUX23 back on N318NV; GXAUX42 turning VELUX42 in flight on N630VA; UX21
+#     out and VELUX21 back on N289GX; GXAUX41 on N837VA (Live Track SALT SSOT, 2026-10-31). Bare UX is also Air
+#     Europa's IATA code: the US-hex rule keeps its Spanish-registered tails out. The family is the prefix as
+#     broadcast; together the three are (VEL|GXA)?UX + 2 digits.
 ICE_AIR_CALLSIGNS = (
     ("VELUX", re.compile(r"^VELUX\d{2}$")),
+    ("GXAUX", re.compile(r"^GXAUX\d{2}$")),
+    ("UX", re.compile(r"^UX\d{2}$")),
     ("TYSON", re.compile(r"^TYSON\d{2}$")),
     ("TYS", re.compile(r"^TYS\d{1,4}$")),
 )
@@ -83,7 +91,7 @@ _US_HEX = (0xA00000, 0xAFFFFF)
 
 
 def ice_air_callsign(callsign, hex_id) -> str | None:
-    """The family ("VELUX", "TYSON" or "TYS") when this flight broadcasts ICE Air's call sign, else None.
+    """The family ("VELUX", "GXAUX", "UX", "TYSON" or "TYS") when this flight broadcasts ICE Air's call sign, else None.
 
     Per flight only: it says nothing about the airframe's next flight. None for a non-US hex or AA3410."""
     h = norm_hex(hex_id)

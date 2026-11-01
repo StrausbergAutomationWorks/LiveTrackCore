@@ -179,7 +179,7 @@ which never expires. Lookups by Mode S hex: `status()`, `is_sourced()`,
 0.2.16: an airliner that flies ICE Air charters and other work too) and
 `CLEARED`; `WATCHED` is every one but cleared, and `CHARTER_LABEL` ("ICE Air Charter?") is the
 label every consumer prints for a charter. `ice_air_callsign(callsign, hex)` (0.2.18) says
-whether THIS flight broadcasts ICE Air's call sign: `"VELUX"` (VELUX + 2 digits), `"TYSON"`
+whether THIS flight broadcasts ICE Air's call sign: `"VELUX"`, `"GXAUX"` or `"UX"` (each + 2 digits, the last two 0.2.22), `"TYSON"`
 (TYSON + 2 digits) or `"TYS"` (TYS + 1-4 digits), on a US Mode S address only (A00000-AFFFFF) and
 never for AA3410, else `None`; a carrier's own designator (GXA, BBQ) says nothing either way. While
 it does, a consumer prints `CHARTER_FLIGHT_LABEL` ("ICE Air Charter"), without the question
