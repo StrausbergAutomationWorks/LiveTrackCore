@@ -282,6 +282,10 @@ def next_stops(feed, static: dict[str, Any] | None,
     station is meaningless". A trip with no NAME is absent: no name is
     guessed and no station code is shown in its place.
 
+    REPEATING TRIP IDS: this keys by trip_id alone, so a feed holding one trip id
+    under two start dates lets the later entity overwrite the earlier (TfNSW,
+    bin\\au_ic2_verify2.py). Hand it one run per trip: saw_livetrack.tfnsw does.
+
     ! Inferred, not measured: an update with no time cannot be checked
     against PAST_S, so it is taken to be ahead of the train. GTFS-RT feeds
     list the stops still to come; one that kept a served stop with no time
@@ -339,6 +343,10 @@ def stop_delays(feed, static: dict[str, Any] | None,
     otherwise the predicted time minus the timetable's (Metra: 0 of 7,318
     recorded stop updates carry a delay field, bin\\saw_835.txt). One rule
     set, chosen by what the update carries, never by operator.
+
+    REPEATING TRIP IDS: this keys by trip_id alone, so a feed holding one trip id
+    under two start dates lets the later entity overwrite the earlier (TfNSW,
+    bin\\au_ic2_verify2.py). Hand it one run per trip: saw_livetrack.tfnsw does.
 
     Absent, never 0, when neither is known. Where the feed sends the trip's
     start_date the service day is known, and a delay up to a day either way
@@ -417,6 +425,55 @@ def trip_coverage(feed, static: dict[str, Any] | None) -> tuple[int, int]:
         if trip_id in sched or trip_id in st:
             hit += 1
     return hit, total
+
+
+def update_delays(trip_update) -> tuple[dict[int, int], set[int]]:
+    """({stop_sequence: delay seconds}, {skipped stop_sequences}) of one TripUpdate.
+
+    Arrival's delay, else departure's. For next_by_timetable. `time` is not read: on
+    TfNSW's feed it is often 0 or absent with the delay set (2026-10-18 to 10-21)."""
+    delays: dict[int, int] = {}
+    skipped: set[int] = set()
+    for stu in trip_update.stop_time_update:
+        if not stu.HasField("stop_sequence"):
+            continue
+        if stu.schedule_relationship == 1:
+            skipped.add(int(stu.stop_sequence))
+        delay = _update_delay(stu)
+        if delay is not None:
+            delays[int(stu.stop_sequence)] = delay
+    return delays, skipped
+
+
+def next_by_timetable(rows, delays: dict[int, int], skipped, now: float):
+    """(stop_sequence, stop_id, delay seconds, estimated arrival epoch) of the next stop, or None.
+
+    rows: (stop_sequence, stop_id, arrival epoch or None, departure epoch or None) for
+    the trip's stops on its service date, in order; the consumer holds the timetable.
+    delays and skipped: update_delays(). The first stop not skipped whose scheduled
+    departure, else arrival, plus its delay is still ahead of `now`; a stop with no delay
+    of its own takes the last one known before it (0 at the start).
+
+    Lee 2026-11-01 and 11-02 (decision 11, D5): V/Line's updates list only some remaining
+    stops, and next_stops names none on 20.8% of them while a position exists; TfNSW's
+    often have no time. MEASURED on capture round 1 (bin\\au_ic1_check.py b): a next stop
+    on 99.7% of V/Line's fixes, behind the train by over 500 m on 0.20%, and on NSW's
+    regional trains 0.38%.
+    """
+    last = 0
+    for seq, stop_id, arrival, departure in rows:
+        delay = delays.get(seq)
+        if delay is None:
+            delay = last
+        else:
+            last = delay
+        if seq in skipped:
+            continue
+        leave = departure if departure is not None else arrival
+        if leave is not None and leave + delay > now:
+            arrive = arrival if arrival is not None else departure
+            return seq, stop_id, delay, arrive + delay
+    return None
 
 
 def iso_utc(epoch: float) -> str:

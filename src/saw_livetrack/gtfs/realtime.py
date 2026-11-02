@@ -76,6 +76,32 @@ def position_of(v) -> tuple[float, float] | None:
     return lat, lon
 
 
+# TripUpdate.StopTimeUpdate.ScheduleRelationship.SKIPPED
+SKIPPED = 1
+
+
+def drop_skipped(feed) -> int:
+    """Remove SKIPPED stop updates from a TripUpdates feed, in place; how many.
+
+    A skipped stop is not the train's next stop, and a stop update with a time is
+    otherwise taken for one (schedule.next_stops). Moved here from Live Track Commuter
+    Rail's poll.py (backlog 319): MEASURED 2026-10-15 on 50 SE Queensland trip-update
+    bodies, 646 of 106,026 stop updates SKIPPED, every one carrying a time.
+    """
+    if feed is None:
+        return 0
+    n = 0
+    for ent in feed.entity:
+        if not ent.HasField("trip_update"):
+            continue
+        updates = ent.trip_update.stop_time_update
+        for i in range(len(updates) - 1, -1, -1):
+            if updates[i].schedule_relationship == SKIPPED:
+                del updates[i]
+                n += 1
+    return n
+
+
 def decode(raw: bytes):
     """Bytes -> a GTFS-RT FeedMessage, or None for a payload that will not
     parse, whatever its shape. Raises ImportError when the `gtfs` extra is

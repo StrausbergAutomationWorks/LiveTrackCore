@@ -45,6 +45,19 @@ Two submodules, deliberately separate:
                           trip, 0,0 dropped, A-B-A returns held). NOT imported
                           here; needs the `gtfs` extra. Data: Renfe, CC BY 4.0.
 
+  saw_livetrack.tfnsw     Transport for NSW's nswtrains feed (0.2.23): each
+                          vehicle to the intercity, commuter or bus consumer, one
+                          update per position's run, the misleading fields
+                          cleared, the timetable on disk. Each user's own key.
+                          NOT imported here; needs the `gtfs` extra. Data:
+                          Transport for NSW, CC BY 4.0.
+
+  saw_livetrack.transport_vic  Transport Victoria (0.2.23): a consumer's folder
+                          of the GTFS Schedule by HTTP Range, the URL read from
+                          the portal each time, and V/Line's realtime with each
+                          user's own key. NOT imported here; realtime needs the
+                          `gtfs` extra. Data: Transport Victoria, CC BY 4.0.
+
   saw_livetrack.map_card  Which Live Track Map Card bundle an instance loads
                           and how its one dashboard resource row changes
                           (0.2.8). Pure; the Home Assistant calls are in
@@ -102,7 +115,8 @@ Two submodules, deliberately separate:
 
 `amtraker` and `gtfs` import from `track`. Never the reverse.
 
-Not affiliated with Amtrak, VIA Rail Canada, Brightline, VR, Fintraffic or Renfe.
+Not affiliated with Amtrak, VIA Rail Canada, Brightline, VR, Fintraffic, Renfe,
+Transport for NSW or Transport Victoria.
 """
 
 from .track import (  # noqa: F401
@@ -135,4 +149,4 @@ from .amtraker import (  # noqa: F401
     speed_kmh,
 )
 
-__version__ = "0.2.22"
+__version__ = "0.2.23"

@@ -4,13 +4,14 @@
   schedule   static GTFS distilled; next station, estimated arrival, delay;
                trip_coverage (is the cached timetable the realtime feed's)
   fleet      one feed's vehicles across polls: what to publish, each record
+  filter     cut a static zip to some route_types or to today's trips (not imported here)
 
 No Home Assistant imports. Only realtime.decode() needs the protobuf
 bindings, which come with the extra: pip install "saw-livetrack[gtfs]".
 Nothing here is imported by `import saw_livetrack`.
 """
 
-from .realtime import Obs, decode, position_of, vehicle_time  # noqa: F401
+from .realtime import SKIPPED, Obs, decode, drop_skipped, position_of, vehicle_time  # noqa: F401
 from .schedule import (  # noqa: F401
     AHEAD_S,
     PAST_S,
@@ -18,9 +19,11 @@ from .schedule import (  # noqa: F401
     distill,
     iso_utc,
     line_name,
+    next_by_timetable,
     next_stops,
     stop_delays,
     trip_coverage,
+    update_delays,
 )
 from .fleet import (  # noqa: F401
     GRACE_S,

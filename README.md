@@ -138,6 +138,37 @@ the `gtfs` extra. Share one client per Home Assistant with
 network is served from the batch it was last in for up to a minute, positions
 and trip updates both (0.2.10).
 
+## `saw_livetrack.tfnsw` - Transport for NSW's `nswtrains` feed
+
+One poller for every Live Track integration that draws TfNSW's regional vehicles,
+each user with their own key (`Authorization: apikey <key>`; each config entry
+passes its own, and the client polls with the oldest). Each vehicle goes to ONE
+consumer: `intercity` for route type 106, `commuter` for 100 (`4T.T.BMT`, `HUN`,
+`SCO`, `SHL`), `bus` for 204 and 205 (`4T.C.`), by the `route_id` prefix until a
+timetable is on disk and by its `route_type` then. `for_consumer(name)` returns that
+consumer's positions and trip updates as two GTFS-Realtime feeds, cleaned once for
+everyone: a trip with a position keeps only that run's update, since one trip id
+runs on consecutive dates and its updates overlap; the position's `stop_id`,
+`current_stop_sequence`, `current_status` and `speed` are cleared, since they mislead.
+The timetable (about 40 MB, no Range, no ETag) goes to
+`.storage/saw_tfnsw_nswtrains.zip` on its own thread, checked by HEAD at most daily;
+`static_version()` and `static_path()` let each consumer distill its own cut. A key is
+given up on after 10 minutes of HTTP 401 or 403 from both feeds with no success between,
+then `AuthRefused` when none is left: one or two 401s are normal here. Share one
+client per Home Assistant with `reference/shared_tfnsw.py` (0.2.23). Needs the `gtfs` extra.
+
+## `saw_livetrack.transport_vic` - Transport Victoria
+
+The GTFS Schedule is one zip of numbered folders, and a consumer takes only its own
+(`intercity` folder 1, `bus` folder 5) by HTTP Range. The address is read from the
+portal's CKAN API each time, because it changes. Checked daily, fetched when the ETag
+changes, the ETag held on every response and the CRC at the end; a 200 to a Range
+request is abandoned unread. `static_path(consumer)` is the folder as a zip at
+`.storage/saw_transport_vic_<folder>.zip`; no key needed. Realtime, V/Line's only so far:
+`for_consumer("intercity")`, as published, with the user's own key (`KeyId`). No
+V/Line rule lives here. Share one client per Home Assistant with
+`reference/shared_transport_vic.py` (0.2.23). Realtime needs the `gtfs` extra.
+
 ## `saw_livetrack.map_card` - one map card, many integrations
 
 Every Live Track integration ships the released
@@ -289,6 +320,12 @@ Spanish rail data (`saw_livetrack.renfe`) is from **[Renfe](https://data.renfe.c
 licensed under
 [Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/).
 
+Transport for NSW data (`saw_livetrack.tfnsw`) is from **[Transport for NSW](https://opendata.transport.nsw.gov.au/)**,
+and Victorian data (`saw_livetrack.transport_vic`) from **[Transport Victoria](https://opendata.transport.vic.gov.au/)**,
+both licensed under
+[Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/). Each user brings their own key;
+nothing here redistributes the data.
+
 The enforcement-aircraft list (`saw_livetrack.enforcement_list`) contains
 information from **[EnforcementAircraft](https://github.com/StrausbergAutomationWorks/EnforcementAircraft)**,
 which is made available under the
@@ -309,7 +346,8 @@ publishes no terms of use; each consumer credits it.
 ## Disclaimer
 
 Independent project. Not affiliated with, endorsed by or connected to Amtrak,
-VIA Rail Canada, Brightline, VR, Fintraffic or Renfe.
+VIA Rail Canada, Brightline, VR, Fintraffic, Renfe, Transport for NSW or
+Transport Victoria.
 
 ## Tests
 
@@ -321,6 +359,8 @@ python tests/test_digitraffic_rail.py
 python tests/test_map_card.py
 python tests/test_shared_map_card.py
 python tests/test_renfe.py
+python tests/test_tfnsw.py
+python tests/test_transport_vic.py
 python tests/test_aircraft_icons.py
 python -m unittest discover -s tests -p "test_gtfs_*.py"
 python -m unittest discover -s tests -p "test_enforcement_list.py"
