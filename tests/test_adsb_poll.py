@@ -156,12 +156,13 @@ class TestHexRound(unittest.TestCase):
         s = Session(lambda u: Resp(429, {}, {"Retry-After": "120"}))
         run(p.hex_round(s, 1000.0))
         self.assertIsNotNone(p.backoff.remaining(ap.FI))
+        self.assertIsNotNone(p.backoff.remaining(ap.LOL))    # 0.2.24: this answer refuses every URL, the fallback's too
         with self.assertRaises(ap.SourceError):
             run(p.circle(s, 41.9, -87.9, 56, 1000.0, sources=ap.FI_ONLY))
-        self.assertEqual(len(s.asked), 1)    # the circle was never requested
+        self.assertEqual(len(s.asked), 2)    # the circle was never requested
         clock.t += 61
         self.assertTrue(run(p.hex_round(s, 1000.0)).startswith("waiting"))
-        self.assertEqual(len(s.asked), 1)
+        self.assertEqual(len(s.asked), 2)
 
     def test_no_hexes_no_request(self):
         p, _, _ = make()
@@ -169,9 +170,20 @@ class TestHexRound(unittest.TestCase):
         self.assertEqual(run(p.hex_round(s, 1000.0)), "idle")
         self.assertEqual(s.asked, [])
 
-    def test_never_adsb_lol(self):
+    def test_adsb_fi_first_and_adsb_lol_never_while_it_answers(self):
+        # 0.2.24 (Lee 2026-11-02 22:11) replaced B16's "never adsb.lol": only while adsb.fi is failing
         self.assertIn("opendata.adsb.fi", ap.HEX_URL)
         self.assertNotIn("lol", ap.HEX_URL)
+        self.assertEqual(ap.HEX_SOURCES, (ap.FI, ap.LOL))
+        p, clock, _ = make()
+        p.set_hexes("x", ["a00808"])
+        s = Session(lambda u: Resp(200, payload(rec("a00808"))))
+        for _ in range(3):
+            self.assertEqual(run(p.hex_round(s, 1000.0)), "ok")
+            clock.t += 61
+        self.assertEqual(len(s.asked), 3)
+        self.assertFalse(any("adsb.lol" in u for u in s.asked))
+        self.assertEqual(p.hex_source, ap.FI)
 
 
 class TestCircle(unittest.TestCase):
@@ -345,6 +357,336 @@ class TestCovered(unittest.TestCase):
         p, _, s = self.setup()
         p.release("lta")
         self.assertIsNone(p.covered("ltea", *self.HOME))
+
+
+class Hung:
+    """A response that never comes: what adsb.fi did from 2026-11-02 21:29."""
+
+    async def __aenter__(self):
+        await asyncio.sleep(5)
+
+    async def __aexit__(self, *a):
+        return False
+
+
+def fi_down(ok_records=("a00808",)):
+    """adsb.fi raises as a timeout does; adsb.lol answers."""
+    return lambda u: TimeoutError() if "adsb.fi" in u else Resp(200, payload(*[rec(h) for h in ok_records]))
+
+
+class TestFailureSkip(unittest.TestCase):
+    """0.2.24: a source that fails gets a skip window, as a 429 does."""
+
+    def ask(self, p, s, lat=41.9):
+        return run(p.circle(s, lat, -87.9, 56, 1000.0, sources=ap.FI_ONLY))
+
+    def test_one_failure_costs_nothing_and_the_second_starts_the_window(self):
+        p, clock, _ = make()
+        s = Session(lambda u: TimeoutError())
+        with self.assertRaises(ap.SourceError):
+            self.ask(p, s)
+        self.assertIsNone(p.backoff.remaining(ap.FI))
+        with self.assertRaises(ap.SourceError):
+            self.ask(p, s, 42.0)
+        self.assertAlmostEqual(p.backoff.remaining(ap.FI), ap.BACKOFF_FIRST_S, places=3)
+        self.assertEqual(len(s.asked), 2)
+        with self.assertRaises(ap.SourceError):
+            self.ask(p, s, 42.1)
+        self.assertEqual(len(s.asked), 2)    # not asked inside the window
+
+    def test_the_window_doubles_to_the_ceiling(self):
+        b = ap.Backoff(clock=(c := Clock()))
+        self.assertIsNone(b.failed("x"))
+        seen = []
+        for _ in range(7):
+            seen.append(b.failed("x"))
+            c.t += seen[-1] + 1
+        self.assertEqual(seen, [60.0, 120.0, 240.0, 480.0, 600.0, 600.0, 600.0])
+
+    def test_a_failure_inside_a_window_was_already_in_flight(self):
+        c = Clock()
+        b = ap.Backoff(clock=c)
+        b.failed("x")
+        self.assertEqual(b.failed("x"), ap.BACKOFF_FIRST_S)
+        c.t += 5
+        self.assertIsNone(b.failed("x"))
+        self.assertIsNone(b.failed("x"))
+        self.assertAlmostEqual(b.remaining("x"), ap.BACKOFF_FIRST_S - 5, places=3)
+        c.t += 60
+        self.assertEqual(b.failed("x"), 2 * ap.BACKOFF_FIRST_S)     # the next step, not two steps on
+
+    def test_an_answer_clears_it(self):
+        p, clock, _ = make()
+        bad = Session(lambda u: TimeoutError())
+        for lat in (41.0, 42.0):
+            with self.assertRaises(ap.SourceError):
+                self.ask(p, bad, lat)
+        clock.t += ap.BACKOFF_FIRST_S + 1
+        self.ask(p, Session(lambda u: Resp(200, payload())), 43.0)
+        self.assertEqual(p.backoff.status(), {})
+        with self.assertRaises(ap.SourceError):
+            self.ask(p, bad, 44.0)
+        self.assertIsNone(p.backoff.remaining(ap.FI))     # one failure again, not the third
+
+    def test_any_failure_counts_but_a_429_keeps_its_own_steps(self):
+        for answer in (lambda u: OSError("reset"), lambda u: Resp(503, {}), lambda u: Resp(403, {}),
+                       lambda u: Resp(200, ValueError("not json"))):
+            p, _, _ = make()
+            s = Session(answer)
+            for lat in (41.0, 42.0):
+                with self.assertRaises(ap.SourceError):
+                    self.ask(p, s, lat)
+            self.assertAlmostEqual(p.backoff.remaining(ap.FI), ap.BACKOFF_FIRST_S, places=3)
+        p, clock, _ = make()
+        with self.assertRaises(ap.SourceError):
+            self.ask(p, Session(lambda u: Resp(429, {})), 41.0)
+        self.assertAlmostEqual(p.backoff.remaining(ap.FI), ap.BACKOFF_FIRST_S, places=3)
+        clock.t += ap.BACKOFF_FIRST_S + 1
+        with self.assertRaises(ap.SourceError):
+            self.ask(p, Session(lambda u: TimeoutError()), 42.0)
+        self.assertIsNone(p.backoff.remaining(ap.FI))     # the 429 was not a failure of this kind
+
+    def test_a_real_hang_is_cut_at_the_timeout_and_counted(self):
+        p, _, _ = make()
+        old = ap.REQUEST_TIMEOUT_S
+        ap.REQUEST_TIMEOUT_S = 0.01
+        try:
+            s = Session(lambda u: Hung())
+            for lat in (41.0, 42.0):
+                with self.assertRaisesRegex(ap.SourceError, "unreachable: TimeoutError"):
+                    self.ask(p, s, lat)
+        finally:
+            ap.REQUEST_TIMEOUT_S = old
+        self.assertIsNotNone(p.backoff.remaining(ap.FI))
+
+    def test_the_window_shows_in_the_status(self):
+        p, _, _ = make()
+        s = Session(lambda u: TimeoutError())
+        for lat in (41.0, 42.0):
+            with self.assertRaises(ap.SourceError):
+                self.ask(p, s, lat)
+        self.assertEqual(list(p.status()["backoff"]), [ap.FI])
+        self.assertEqual(p.status()["hex_source"], ap.FI)
+
+    def test_a_consumer_with_a_fallback_stops_waiting(self):
+        # what the night measured: Live Track Aircraft asked adsb.fi first every poll and waited 20 s each time
+        p, clock, _ = make()
+        s = Session(fi_down())
+        for i in range(4):
+            name, _obs = run(p.circle(s, 41.0 + i, -87.9, 56, 1000.0))
+            self.assertEqual(name, ap.LOL)
+            clock.t += 15
+        self.assertEqual(sum("adsb.fi" in u for u in s.asked), 2)
+        self.assertEqual(sum("adsb.lol" in u for u in s.asked), 4)
+
+
+class TestHexFallback(unittest.TestCase):
+    """0.2.24: the hex round falls back to adsb.lol only while adsb.fi is failing."""
+
+    def poll(self, hexes=("a00808",)):
+        p, clock, slept = make()
+        p.set_hexes("x", hexes)
+        return p, clock, slept
+
+    def test_a_failing_round_is_answered_by_adsb_lol_at_once(self):
+        p, _, _ = self.poll(("a00808", "a022b0"))
+        s = Session(fi_down())
+        status = run(p.hex_round(s, 1000.0))
+        self.assertEqual(status, "ok from adsb.lol: adsb.fi unreachable: TimeoutError()")
+        self.assertEqual(p.hex_source, ap.LOL)
+        self.assertEqual([o.identity for o in p.hex_observations("x")], ["a00808"])
+        self.assertEqual(len(s.asked), 2)
+        self.assertTrue(s.asked[0].startswith(ap.HEX_URL))
+        self.assertEqual(s.asked[1], "https://api.adsb.lol/v2/hex/A00808,A022B0")
+
+    def test_inside_adsb_fis_window_it_is_not_asked(self):
+        p, clock, _ = self.poll()
+        p.backoff.refused(ap.FI, 300.0)
+        s = Session(fi_down())
+        self.assertEqual(run(p.hex_round(s, 1000.0)), "ok from adsb.lol: adsb.fi backing off")
+        self.assertEqual(len(s.asked), 1)
+        self.assertIn("adsb.lol", s.asked[0])
+
+    def test_back_to_adsb_fi_when_it_answers(self):
+        p, clock, _ = self.poll()
+        run(p.hex_round(Session(fi_down()), 1000.0))
+        self.assertEqual(p.hex_source, ap.LOL)
+        clock.t += 61
+        s = Session(lambda u: Resp(200, payload(rec("a00808"))))
+        self.assertEqual(run(p.hex_round(s, 1000.0)), "ok")
+        self.assertEqual(p.hex_source, ap.FI)
+        self.assertEqual(len(s.asked), 1)
+        self.assertIn("adsb.fi", s.asked[0])
+
+    def test_both_failing_keeps_the_last_answer_and_its_source(self):
+        p, clock, _ = self.poll()
+        run(p.hex_round(Session(lambda u: Resp(200, payload(rec("a00808")))), 1000.0))
+        clock.t += 61
+        s = Session(lambda u: TimeoutError())
+        status = run(p.hex_round(s, 1000.0))
+        self.assertTrue(status.startswith("failed: adsb.fi unreachable"), status)
+        self.assertIn("adsb.lol unreachable", status)
+        self.assertEqual(p.hex_source, ap.FI)
+        self.assertEqual(len(p.hex_observations("x")), 1)
+        clock.t += ap.HEX_STALE_S
+        self.assertEqual(p.hex_observations("x"), [])
+
+    def test_both_in_their_windows_asks_nobody(self):
+        p, _, _ = self.poll()
+        p.backoff.refused(ap.FI, 300.0)
+        p.backoff.refused(ap.LOL, 300.0)
+        s = Session(fi_down())
+        self.assertEqual(run(p.hex_round(s, 1000.0)), "waiting: adsb.fi backing off; adsb.lol backing off")
+        self.assertEqual(s.asked, [])
+
+    def test_a_round_is_one_sources_whole_answer(self):
+        hexes = ["%06x" % (0xa00000 + i) for i in range(ap.MAX_PER_REQUEST + 5)]
+        p, _, _ = self.poll(hexes)
+        calls = []
+
+        def answer(u):
+            calls.append(u)
+            if "adsb.lol" in u:
+                return Resp(200, payload(rec(hexes[-1])))
+            return Resp(200, payload(rec(hexes[0]))) if len(calls) == 1 else TimeoutError()
+        status = run(p.hex_round(Session(answer), 1000.0))
+        self.assertTrue(status.startswith("ok from adsb.lol"))
+        # adsb.fi's first part is not mixed into adsb.lol's round
+        self.assertNotIn(hexes[0], [o.identity for o in p.hex_observations("x")])
+        self.assertEqual(sum("adsb.lol" in u for u in calls), 2)
+
+    def test_the_fallback_answer_parses(self):
+        p, _, _ = self.poll()
+        run(p.hex_round(Session(fi_down()), 1000.0))
+        self.assertEqual(p.hex_observations("x")[0].observed_at, 1_800_000_000 - 1)
+
+
+class TestWarnings(unittest.TestCase):
+    """0.2.24: one WARNING when a source starts failing, one when it has answered again."""
+    LOG = "saw_livetrack.adsb_poll"
+
+    def fail(self, p, clock, n=1, answer=None):
+        s = Session(answer or (lambda u: TimeoutError()))
+        for i in range(n):
+            left = p.backoff.remaining(ap.FI)
+            if left is not None:
+                clock.t += left + 1
+            with self.assertRaises(ap.SourceError):
+                run(p.get_json(s, ap.FI, "https://x/%d" % i))
+
+    def good(self, p):
+        run(p.get_json(Session(lambda u: Resp(200, {})), ap.FI, "https://x/ok"))
+
+    def test_one_failure_says_nothing(self):
+        p, clock, _ = make()
+        with self.assertNoLogs(self.LOG, "WARNING"):
+            self.fail(p, clock, 1)
+            self.good(p)
+        self.assertEqual(p._health, {})
+
+    def test_one_warning_when_it_starts_failing(self):
+        p, clock, _ = make()
+        with self.assertLogs(self.LOG, "WARNING") as cm:
+            self.fail(p, clock, 6)
+        self.assertEqual(len(cm.output), 1)
+        self.assertIn("adsb.fi is failing (TimeoutError())", cm.output[0])
+
+    def test_one_warning_when_it_has_answered_again(self):
+        p, clock, _ = make()
+        self.fail(p, clock, 2)
+        clock.t += ap.BACKOFF_FIRST_S + 1
+        with self.assertNoLogs(self.LOG, "WARNING"):
+            self.good(p)
+            clock.t += ap.ANSWERING_AGAIN_AFTER_S - 1
+            self.good(p)
+        clock.t += 1
+        with self.assertLogs(self.LOG, "WARNING") as cm:
+            self.good(p)
+        self.assertEqual(len(cm.output), 1)
+        self.assertIn("adsb.fi is answering again, after", cm.output[0])
+        clock.t += ap.ANSWERING_AGAIN_AFTER_S + 1
+        with self.assertNoLogs(self.LOG, "WARNING"):
+            self.good(p)
+
+    def test_a_feed_answering_now_and_then_is_one_episode(self):
+        p, clock, _ = make()
+        with self.assertLogs(self.LOG, "WARNING") as cm:
+            for _ in range(5):
+                self.fail(p, clock, 2)
+                clock.t += ap.BACKOFF_MAX_S + 1
+                self.good(p)
+                clock.t += ap.ANSWERING_AGAIN_AFTER_S - 10
+        self.assertEqual(len(cm.output), 1)
+        self.assertIn("is failing", cm.output[0])
+
+    def test_a_steady_429_warns_once(self):
+        p, clock, _ = make()
+        with self.assertLogs(self.LOG, "WARNING") as cm:
+            self.fail(p, clock, 5, lambda u: Resp(429, {}))
+        self.assertEqual(len(cm.output), 1)
+        self.assertIn("(HTTP 429)", cm.output[0])
+
+    def test_each_source_has_its_own_episode(self):
+        p, clock, _ = make()
+        s = Session(lambda u: TimeoutError())
+        with self.assertLogs(self.LOG, "WARNING") as cm:
+            for source in (ap.FI, ap.LOL):
+                for lap in range(2):
+                    with self.assertRaises(ap.SourceError):
+                        run(p.get_json(s, source, "https://x/"))
+        self.assertEqual(len(cm.output), 2)
+
+
+class TestFallbackEvery(unittest.TestCase):
+    """0.2.24: a second consumer on the fallback asks it at most every fallback_every_s while the first source is out."""
+
+    def ask(self, p, s):
+        return run(p.circle(s, 30.0, -96.0, 463.0, 1000.0, consumer="salt", fallback_every_s=30.0))
+
+    def out(self):
+        p, clock, _ = make()
+        s = Session(fi_down())
+        p.backoff.failed(ap.FI)
+        p.backoff.failed(ap.FI)      # adsb.fi in its window
+        return p, clock, s
+
+    def test_spaced_while_the_first_source_is_out(self):
+        p, clock, s = self.out()
+        a = self.ask(p, s)
+        self.assertEqual(a[0], ap.LOL)
+        self.assertEqual(len(s.asked), 1)
+        clock.t += 15
+        self.assertEqual(self.ask(p, s), a)
+        self.assertEqual(len(s.asked), 1)
+        clock.t += 15
+        self.ask(p, s)
+        self.assertEqual(len(s.asked), 2)
+
+    def test_the_first_source_is_asked_as_soon_as_its_window_ends(self):
+        p, clock, s = self.out()
+        self.ask(p, s)
+        p.backoff.answered(ap.FI)      # no window now
+        clock.t += 15
+        ok = Session(lambda u: Resp(200, payload(rec("a00808"))))
+        self.assertEqual(self.ask(p, ok)[0], ap.FI)
+        self.assertEqual(len(ok.asked), 1)
+
+    def test_an_answer_from_the_first_source_is_never_reused(self):
+        p, clock, _ = make()
+        s = Session(lambda u: Resp(200, payload(rec("a00808"))))
+        self.assertEqual(self.ask(p, s)[0], ap.FI)
+        p.backoff.failed(ap.FI)
+        p.backoff.failed(ap.FI)      # adsb.fi goes out right after answering
+        clock.t += ap.CIRCLE_SHARE_S + 1
+        self.assertEqual(self.ask(p, s)[0], ap.LOL)
+        self.assertEqual(len(s.asked), 2)
+
+    def test_without_it_every_poll_asks(self):
+        p, clock, s = self.out()
+        for _ in range(3):
+            run(p.circle(s, 30.0, -96.0, 463.0, 1000.0, consumer="lta"))
+            clock.t += ap.CIRCLE_SHARE_S + 1
+        self.assertEqual(len(s.asked), 3)
 
 
 class TestClaims(unittest.TestCase):

@@ -19,8 +19,14 @@ So both ask through this module and neither imports the other.
 ! THE PARSER, THE BACKOFF AND THE CIRCLE FETCH MOVED VERBATIM from Live Track Aircraft's
 sources/adsb.py and sources/base.py at 62064b6, and the hex round from its watch.py; what is new is the
 sharing around them.
-! NEVER adsb.lol FOR THE HEX POLL (B16). A circle's sources are the caller's: Live Track Aircraft
-keeps adsb.fi then adsb.lol, Live Track Enforcement Aircraft asks adsb.fi only.
+! THE HEX ROUND ASKS adsb.fi, AND adsb.lol ONLY WHILE adsb.fi IS FAILING (0.2.24; Lee 2026-11-02 22:11, replacing
+B16's "never adsb.lol for the hex poll", after adsb.fi hung from 21:29 that night and every listed aircraft left the
+map). A circle's sources are the caller's: Live Track Aircraft and Live Track SALT ask adsb.fi then adsb.lol.
+! A SOURCE THAT FAILS GETS A SKIP WINDOW, AS A 429 DOES (0.2.24). Every request to a hung feed waited out
+REQUEST_TIMEOUT_S in turn, and a timeout started no backoff, so Live Track Aircraft's 15 s poll became about 75 s
+(measured 2026-11-02: 16-18 sensor updates per 5 minutes became 4) while adsb.lol was answering in 0.75 s.
+! ONE WARNING WHEN A SOURCE STARTS FAILING, ONE WHEN IT HAS ANSWERED AGAIN (0.2.24; 05_SHARED_LESSONS.md B16: a
+fall-through must say why at a level someone will see). A 30-minute outage had left no line in the log.
 ! No Home Assistant import and no aiohttp import: the session comes from the consumer, used through
 session.get(url, headers=...) and resp.status / resp.headers / resp.json(content_type=None).
 """
@@ -54,6 +60,10 @@ CIRCLE_URLS = {
 FI_ONLY = (FI,)
 FI_THEN_LOL = (FI, LOL)
 HEX_URL = "https://opendata.adsb.fi/api/v2/icao/"
+# ! adsb.lol's list takes the same comma list. Measured 2026-11-02 from the box: 700 hexes (a 4,927-character URL),
+# upper or lower case, HTTP 200 in 0.47 s; 1,000 in 0.42 s. Asked only while adsb.fi is failing (hex_round).
+HEX_URLS = {FI: HEX_URL, LOL: "https://api.adsb.lol/v2/hex/"}
+HEX_SOURCES = (FI, LOL)
 
 # --- cadences ---------------------------------------------------------------
 HEX_INTERVAL_S = 60
@@ -74,6 +84,15 @@ COVER_FRESH_S = 20.0
 BACKOFF_FIRST_S = 60.0
 BACKOFF_MAX_S = 600.0
 RETRY_AFTER_MAX_S = 900.0
+# ! A FAILURE THAT IS NOT A 429 (a timeout, a broken connection, any other status, an unreadable answer): this many in
+# a row start a skip window of BACKOFF_FIRST_S, doubling per window that ends in another failure, to BACKOFF_MAX_S.
+# Two, so one slow answer costs nothing. adsb.fi also counts 400/401/403/404 towards an IP restriction (B16a), so a
+# steady refusal is not asked again every 15 s either.
+FAILURES_BEFORE_SKIP = 2
+# The log: a WARNING at this many failures in a row, and "answering again" once the source has answered for this long
+# with no failure in between, so a feed answering one request in ten is one episode and not a pair of lines a minute.
+FAILURES_BEFORE_WARNING = 2
+ANSWERING_AGAIN_AFTER_S = 300.0
 
 # ! A SHORT ANSWER IS NOT A NEGATIVE RESULT. Measured 2026-09-25: on the edges of its 429 cycle
 # adsb.lol answered HTTP 200 with 38 aircraft, then with 0, where ~200 were overhead a poll earlier.
@@ -244,6 +263,7 @@ class Backoff:
         self._until: dict[str, float] = {}
         self._until_wall: dict[str, float] = {}
         self._strikes: dict[str, int] = {}
+        self._failures: dict[str, int] = {}
 
     def remaining(self, name: str) -> float | None:
         until = self._until.get(name)
@@ -262,10 +282,28 @@ class Backoff:
         self._until_wall[name] = self._wall() + delay
         return delay, strikes
 
+    def failed(self, name: str) -> float | None:
+        """Record a failure that is not a 429. Returns the skip seconds it started, or None.
+
+        ! A failure landing inside a running window was already in flight when the window began (several consumers
+        hang on one feed at once): it neither lengthens the window nor counts, so one hang is one step.
+        """
+        if self.remaining(name) is not None:
+            return None
+        count = self._failures.get(name, 0) + 1
+        self._failures[name] = count
+        if count < FAILURES_BEFORE_SKIP:
+            return None
+        delay = min(BACKOFF_MAX_S, BACKOFF_FIRST_S * 2 ** (count - FAILURES_BEFORE_SKIP))
+        self._until[name] = self._clock() + delay
+        self._until_wall[name] = self._wall() + delay
+        return delay
+
     def answered(self, name: str) -> int:
         """Record a 200. Returns the refusals it ended (0 if none)."""
         self._until.pop(name, None)
         self._until_wall.pop(name, None)
+        self._failures.pop(name, None)
         return self._strikes.pop(name, 0)
 
     def status(self) -> dict[str, str]:
@@ -324,6 +362,8 @@ class Poll:
         self._hex_at: float | None = None
         self._hex_obs: dict[str, Observation] = {}
         self.hex_status = "idle"
+        self.hex_source = FI                    # the feed that gave the last good hex answer, for its credit
+        self._health: dict[str, dict[str, Any]] = {}   # source -> its failure episode, for the two WARNINGs
         self._pace_locks: dict[str, asyncio.Lock] = {}
         self._last_start: dict[str, float] = {}
         self._circles: dict[tuple, list] = {}
@@ -368,6 +408,31 @@ class Poll:
         self.circle_how.pop(consumer, None)
 
     # --- one request ----------------------------------------------------------
+    def _note_failed(self, source: str, why: str) -> None:
+        """One WARNING per episode, at FAILURES_BEFORE_WARNING failures in a row."""
+        ep = self._health.setdefault(source, {"count": 0, "since": self._clock(), "warned": False, "good_since": None})
+        ep["count"] += 1
+        ep["good_since"] = None
+        if not ep["warned"] and ep["count"] >= FAILURES_BEFORE_WARNING:
+            ep["warned"] = True
+            _LOGGER.warning("%s is failing (%s); the aircraft integrations use another feed where they can, "
+                            "and try it again after a pause", source, why)
+
+    def _note_answered(self, source: str) -> None:
+        """Ends the episode: at once if it never warned, else after ANSWERING_AGAIN_AFTER_S with no failure, with one WARNING."""
+        ep = self._health.get(source)
+        if ep is None:
+            return
+        if not ep["warned"]:
+            del self._health[source]
+            return
+        t = self._clock()
+        if ep["good_since"] is None:
+            ep["good_since"] = t
+        elif t - ep["good_since"] >= ANSWERING_AGAIN_AFTER_S:
+            del self._health[source]
+            _LOGGER.warning("%s is answering again, after %.0f minutes", source, (t - ep["since"]) / 60.0)
+
     async def _pace(self, source: str) -> None:
         lock = self._pace_locks.setdefault(source, asyncio.Lock())
         async with lock:
@@ -397,16 +462,21 @@ class Poll:
                             header = resp.headers.get("Retry-After")
                             delay, strikes = self.backoff.refused(
                                 source, retry_after_s(header, time.time()))
-                            _LOGGER.log(logging.WARNING if strikes > 1 else logging.INFO,
-                                        "%s rate-limited (HTTP 429, %s in a row); skipping it for %.0f s (%s)",
-                                        source, strikes, delay,
-                                        f"Retry-After {header!r}" if header else "no Retry-After")
+                            _LOGGER.info("%s rate-limited (HTTP 429, %s in a row); skipping it for %.0f s (%s)",
+                                         source, strikes, delay,
+                                         f"Retry-After {header!r}" if header else "no Retry-After")
+                        else:
+                            self.backoff.failed(source)
+                        self._note_failed(source, f"HTTP {resp.status}")
                         raise SourceError(f"{source} returned HTTP {resp.status}")
                     payload = await resp.json(content_type=None)
         except SourceError:
             raise
         except Exception as err:  # noqa: BLE001 - every fault is this source failing
+            self.backoff.failed(source)
+            self._note_failed(source, repr(err))
             raise SourceError(f"{source} unreachable: {err!r}") from err
+        self._note_answered(source)
         ended = self.backoff.answered(source)
         if ended:
             _LOGGER.info("%s answering again after %s refusal(s)", source, ended)
@@ -472,7 +542,8 @@ class Poll:
     async def circle(self, session, latitude: float, longitude: float, radius_km: float, now: float,
                      sources: tuple[str, ...] = FI_THEN_LOL, min_expected: int | None = None,
                      user_agent: str | None = None,
-                     consumer: str | None = None) -> tuple[str, list[Observation]]:
+                     consumer: str | None = None,
+                     fallback_every_s: float | None = None) -> tuple[str, list[Observation]]:
         """Every aircraft in the circle: (source, observations). Raises SourceError.
 
         ! A COVERED CIRCLE COSTS NO REQUEST (0.2.14): with `consumer` given, a circle wholly inside
@@ -480,6 +551,10 @@ class Poll:
         answer kept as this consumer's, for whoever lies inside it.
         ! AN IDENTICAL CIRCLE IS ASKED ONCE: the same centre (to 4 decimals, ~11 m), radius in nm and
         sources within CIRCLE_SHARE_S, by any consumer, gets that answer or that failure.
+        ! fallback_every_s (0.2.24): while the first source is in its skip window and this consumer's last answer came
+        from a fallback, the fallback is asked at most this often and that answer served between. Two consumers polling
+        adsb.lol every 15 s from one IP had half their requests refused (B16, measured 2026-09-22), and a refusal there
+        backs off the feed Live Track Aircraft is then living on.
         """
         if consumer is not None:
             hit = self.covered(consumer, latitude, longitude, radius_km)
@@ -487,6 +562,11 @@ class Poll:
                 self.circle_how[consumer] = "covered"
                 return hit
             self.circle_how[consumer] = "asked"
+            last = self._answers.get(consumer)
+            if (fallback_every_s and last is not None and last[4] != sources[0]
+                    and self._clock() - last[0] < fallback_every_s
+                    and self.backoff.remaining(sources[0]) is not None):
+                return last[4], last[5]
         res = await self._circle_shared(session, latitude, longitude, radius_km, now, sources,
                                         min_expected, user_agent)
         if consumer is not None:
@@ -529,7 +609,9 @@ class Poll:
         """Ask for the union once a minute; a call before it is due returns at once.
 
         ! A failure keeps the last good answer until it is stale: a non-200 is never "none of them is
-        flying". Returns the round's status.
+        flying". Returns the round's status: "ok" from adsb.fi, "ok from adsb.lol: ..." from the fallback.
+        ! adsb.lol ONLY AFTER adsb.fi HAS FAILED OR WHILE IT IS IN ITS SKIP WINDOW (0.2.24), and never part of a round:
+        a round is one source's whole answer, so hex_source says where all of it came from.
         """
         async with self._hex_lock:
             if not self.hex_due():
@@ -539,21 +621,27 @@ class Poll:
             if not hexes:
                 self.hex_status = "idle"
                 return self.hex_status
-            left = self.backoff.remaining(FI)
-            if left is not None:
-                self.hex_status = f"waiting: {FI} backing off"
-                return self.hex_status
-            found: dict[str, Observation] = {}
-            for part in chunks([h.upper() for h in hexes]):
+            why: list[str] = []
+            asked = False
+            for source in HEX_SOURCES:
+                if self.backoff.remaining(source) is not None:
+                    why.append(f"{source} backing off")
+                    continue
+                asked = True
+                found: dict[str, Observation] = {}
                 try:
-                    payload = await self.get_json(session, FI, HEX_URL + ",".join(part))
+                    for part in chunks([h.upper() for h in hexes]):
+                        payload = await self.get_json(session, source, HEX_URLS[source] + ",".join(part))
+                        found.update(parse_payload(payload if isinstance(payload, dict) else {}, now))
                 except SourceError as err:
-                    self.hex_status = f"failed: {err}"
-                    return self.hex_status
-                found.update(parse_payload(payload if isinstance(payload, dict) else {}, now))
-            self._hex_obs = found
-            self._hex_at = self._clock()
-            self.hex_status = "ok"
+                    why.append(str(err))
+                    continue
+                self._hex_obs = found
+                self._hex_at = self._clock()
+                self.hex_source = source
+                self.hex_status = "ok" if source == FI else f"ok from {source}: {why[0]}"
+                return self.hex_status
+            self.hex_status = ("failed: " if asked else "waiting: ") + "; ".join(why)
             return self.hex_status
 
     def hex_observations(self, consumer: str) -> list[Observation]:
@@ -565,7 +653,7 @@ class Poll:
 
     def status(self) -> dict[str, Any]:
         """Low-cardinality state for a sensor attribute."""
-        return {"hex_status": self.hex_status, "hexes": len(self.union()),
+        return {"hex_status": self.hex_status, "hex_source": self.hex_source, "hexes": len(self.union()),
                 "consumers": sorted(set(self._hexes) | set(self._claims)),
                 "backoff": self.backoff.status()}
 

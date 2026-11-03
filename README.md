@@ -239,8 +239,12 @@ recent answer is answered from that answer, filtered by distance, with no
 request at all (0.2.14); every request to one source is spaced a second apart; and
 one HTTP 429 backoff covers every consumer. Each consumer says which aircraft
 it draws (`claim`) so another can leave them alone (`claimed_by_others`). The
-circle's sources are the caller's choice; the hex request goes to adsb.fi
-only. No Home Assistant import, no aiohttp import (0.2.13).
+circle's sources are the caller's choice; the hex request goes to adsb.fi, and
+to adsb.lol only while adsb.fi is failing (0.2.24). A source that keeps failing
+in any other way (a timeout, a broken connection, another status) gets a skip
+window like a 429's, so one hung feed does not stall every consumer, and the log
+carries one WARNING when a source starts failing and one when it has answered
+again. No Home Assistant import, no aiohttp import (0.2.13).
 
 ## `saw_livetrack.ais` and `saw_livetrack.aisstream` - AIS, once per instance
 
@@ -337,8 +341,8 @@ which is made available under the
 [Open Database License (ODbL) v1.0](https://opendatacommons.org/licenses/odbl/1-0/).
 
 Aircraft positions (`saw_livetrack.adsb_poll`) are from **[adsb.fi](https://adsb.fi)**,
-and from **[adsb.lol](https://adsb.lol)** (ODbL v1.0) where a consumer asks it;
-each consumer credits the feeds it uses.
+and from **[adsb.lol](https://adsb.lol)** (ODbL v1.0) where a consumer asks it and for the hex
+request while adsb.fi is failing; each consumer credits the feeds it uses.
 
 Vessel positions (`saw_livetrack.aisstream`) are from **[aisstream.io](https://aisstream.io)**, which
 publishes no terms of use; each consumer credits it.
