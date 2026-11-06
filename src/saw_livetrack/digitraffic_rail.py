@@ -272,18 +272,25 @@ def next_stop(train, commercial_only=False):
     ETA is the live estimate, else the schedule. `differenceInMinutes` is the
     delay ROUNDED to the minute (measured: 50,137 of 50,551 rows); the next
     stop's estimate wins, else the last recorded actual.
+
+    The search starts AFTER the last row with an actual time (backlog 289):
+    Digitraffic leaves a stop the train made with no actual while a later row
+    has one, and the first row without an actual then lies behind the train.
+    Measured: 1,076 of 5,224 commuter runs (10-15 Oct, bin\\fi_noactual.txt);
+    433 of 1,657 long-distance runs (29 Oct-5 Nov, bin\\fi289_ic_exposure.txt),
+    HDM 230 of 274, H 30 of 30; live 2026-11-06 03:25Z, IC 40 named TK behind
+    the train with SK ahead.
     """
     rows = train.get("timeTableRows") if isinstance(train, dict) else None
     if not isinstance(rows, list):
         return None
+    rows = [r for r in rows if isinstance(r, dict)]
+    last = max((i for i, r in enumerate(rows) if r.get("actualTime")), default=-1)
     last_actual = None
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        if row.get("actualTime"):
-            if isinstance(row.get("differenceInMinutes"), int):
-                last_actual = row["differenceInMinutes"]
-            continue
+    for row in rows[:last + 1]:
+        if row.get("actualTime") and isinstance(row.get("differenceInMinutes"), int):
+            last_actual = row["differenceInMinutes"]
+    for row in rows[last + 1:]:
         if row.get("cancelled") or not row.get("trainStopping"):
             continue
         if commercial_only and not row.get("commercialStop"):

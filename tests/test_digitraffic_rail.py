@@ -124,6 +124,49 @@ cancelled_row = train(3, "Long-distance", "IC", rows=[row("ARRIVAL", "B", "2026-
                                                       row("ARRIVAL", "C", "2026-10-11T07:30:00.000Z")])
 check("a cancelled stop is skipped", dr.next_stop(cancelled_row)[0] == "C")
 
+# --- backlog 289: a stop made with no actual time, a later row with one ------
+# Commuter 1502 on 2026-10-16 (Santala and Skogby with no actual between rows
+# that had one); IC 40 live 2026-11-06 03:25Z named TK with SK ahead.
+hole = train(1502, "Commuter", "HL", line="Y", rows=[
+    row("DEPARTURE", "HKO", "2026-10-16T05:00:00.000Z", "2026-10-16T05:00:30.000Z", 0),
+    row("ARRIVAL", "STA", "2026-10-16T05:10:00.000Z"),                                   # made, no actual
+    row("DEPARTURE", "STA", "2026-10-16T05:11:00.000Z"),                                 # made, no actual
+    row("ARRIVAL", "SKY", "2026-10-16T05:20:00.000Z", "2026-10-16T05:22:10.000Z", 2),
+    row("DEPARTURE", "SKY", "2026-10-16T05:21:00.000Z", "2026-10-16T05:23:00.000Z", 2),
+    row("ARRIVAL", "KKN", "2026-10-16T05:40:00.000Z", diff=3, estimate="2026-10-16T05:43:00.000Z"),
+])
+st, eta, delay = dr.next_stop(hole, commercial_only=True)
+check("289: the next stop is AFTER the last actual row, not the made stop without one", st == "KKN")
+check("289: its estimate and delay are that stop's", eta == _dt.datetime(2026, 10, 16, 5, 43, tzinfo=UTC) and delay == 3)
+hole_nodiff = train(1503, "Commuter", "HL", rows=[
+    row("DEPARTURE", "HKO", "2026-10-16T05:00:00.000Z", "2026-10-16T05:00:30.000Z", 0),
+    row("ARRIVAL", "STA", "2026-10-16T05:10:00.000Z", diff=9),                            # behind the train
+    row("ARRIVAL", "SKY", "2026-10-16T05:20:00.000Z", "2026-10-16T05:25:00.000Z", 5),
+    row("ARRIVAL", "KKN", "2026-10-16T05:40:00.000Z"),
+])
+check("289: with no delay on the next row, the LAST actual's delay, not one behind the train",
+      dr.next_stop(hole_nodiff, commercial_only=True)[2] == 5)
+check("289: a made stop behind the train with a delay of its own is still not the next stop",
+      dr.next_stop(hole_nodiff, commercial_only=True)[0] == "KKN")
+last_is_passing = train(1504, "Long-distance", "IC", rows=[
+    row("DEPARTURE", "HKI", "2026-10-16T05:00:00.000Z", "2026-10-16T05:00:20.000Z", 0),
+    row("ARRIVAL", "PSL", "2026-10-16T05:05:00.000Z"),                                    # made, no actual
+    row("ARRIVAL", "XX", "2026-10-16T05:08:00.000Z", "2026-10-16T05:09:00.000Z", 1,
+        stop=False, commercial=False),                                                    # passing point WITH actual
+    row("ARRIVAL", "TKL", "2026-10-16T05:15:00.000Z"),
+])
+check("289: an actual time on a passing point counts as progress", dr.next_stop(last_is_passing, commercial_only=True)[0] == "TKL")
+check("289: and its delay is the fallback", dr.next_stop(last_is_passing, commercial_only=True)[2] == 1)
+arrived_hole = train(1505, "Long-distance", "IC", rows=[
+    row("DEPARTURE", "HKI", "2026-10-16T05:00:00.000Z", "2026-10-16T05:00:20.000Z", 0),
+    row("ARRIVAL", "PSL", "2026-10-16T05:05:00.000Z"),                                    # made, no actual
+    row("ARRIVAL", "TPE", "2026-10-16T06:30:00.000Z", "2026-10-16T06:31:00.000Z", 1),     # the last stop, made
+])
+check("289: a train whose LAST row has an actual has arrived, whatever lacks one behind it",
+      dr.next_stop(arrived_hole, commercial_only=True) is None)
+check("289: a junk row in the timetable is skipped, not a crash",
+      dr.next_stop(train(1506, "Long-distance", "IC", rows=["junk", row("ARRIVAL", "A", "2026-10-16T05:00:00.000Z")]))[0] == "A")
+
 # --- join / split ------------------------------------------------------------
 tab2 = dr.TrainTable()
 tab2.update([train(1, "Long-distance", "S"), train(3, "Commuter", "HL", line="R")])

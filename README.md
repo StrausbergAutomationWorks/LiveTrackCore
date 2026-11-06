@@ -106,7 +106,9 @@ track machines, test runs) to `freight`. One train TYPE overrides its category:
 `MV`, empty passenger stock, which Digitraffic files under `Long-distance`,
 goes to `freight` (it carries no passengers), and so does `V`, a depot or yard
 train (varikkojuna). `next_stop(train)` gives the next
-station, its ETA and the delay in whole minutes. Sends the `Accept-Encoding: gzip`
+station, its ETA and the delay in whole minutes, looking only after the last
+row with an actual time: Digitraffic can leave a stop the train made without
+one (0.2.25). Sends the `Accept-Encoding: gzip`
 Digitraffic requires and a `Digitraffic-User` header. No extra dependencies.
 Share one client per Home Assistant with `reference/shared_digitraffic_rail.py`:
 each integration registers the consumer it draws, and the client keeps
