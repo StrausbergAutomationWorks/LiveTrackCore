@@ -159,23 +159,32 @@ def _agency_today(z: zipfile.ZipFile) -> date:
 
 
 def services_on(z: zipfile.ZipFile, days: Iterable[date]) -> set[str] | None:
-    """service_ids running on any of `days` (calendar.txt, then calendar_dates.txt: 1
-    adds, 2 removes), or None when the zip has neither file (every trip runs)."""
+    """service_ids running on any of `days`, or None when the zip has neither calendar
+    file (every trip runs). Each day is worked out on its own: calendar.txt, then THAT
+    day's calendar_dates.txt rows (1 adds, 2 removes); the days are then joined. Until
+    0.2.26 one set ran across the days, so a removal dated one day also dropped a service
+    the calendar ran on the others (measured 2026-11-06 on Renfe's long-distance
+    timetable: train 15001 and others, which ran the next day). saw_livetrack.renfe's
+    TripIndex keeps its own copy of this rule."""
     cal = list(_rows(z, "calendar.txt"))
     dates = list(_rows(z, "calendar_dates.txt"))
     if not cal and not dates:
         return None
+    by_date: dict[str, list[dict[str, str]]] = {}
+    for r in dates:
+        if r.get("date") and r.get("service_id"):
+            by_date.setdefault(r["date"], []).append(r)
     on: set[str] = set()
     for day in days:
         wd, ymd = _WEEKDAYS[day.weekday()], day.strftime("%Y%m%d")
-        on |= {r["service_id"] for r in cal if r.get("service_id") and r.get(wd) == "1"
-               and r.get("start_date", "") <= ymd <= r.get("end_date", "")}
-        for r in dates:
-            if r.get("date") == ymd and r.get("service_id"):
-                if r.get("exception_type") == "1":
-                    on.add(r["service_id"])
-                elif r.get("exception_type") == "2":
-                    on.discard(r["service_id"])
+        that_day = {r["service_id"] for r in cal if r.get("service_id") and r.get(wd) == "1"
+                    and r.get("start_date", "") <= ymd <= r.get("end_date", "")}
+        for r in by_date.get(ymd, ()):
+            if r.get("exception_type") == "1":
+                that_day.add(r["service_id"])
+            elif r.get("exception_type") == "2":
+                that_day.discard(r["service_id"])
+        on |= that_day
     return on
 
 

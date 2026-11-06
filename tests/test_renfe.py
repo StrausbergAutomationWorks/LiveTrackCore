@@ -99,6 +99,15 @@ check("index: removed by calendar_dates", idx.route_type("1090L99999C5") is None
 check("index: added by calendar_dates (tomorrow)", idx.route_type("1091M23744C5") == "2")
 check("index: size", len(idx) == 4)
 check("index: day", idx.day == TODAY)
+# A calendar_dates removal is for its own day (0.2.26): MON runs Monday 19th; removed on Tuesday 20th, it still runs
+# on the 19th. The old code dropped it, and with it the day's C5 and the Murcia bus.
+idx2 = rf.TripIndex.from_zip(static_zip(b"MON,20261020,2\n"), today=TODAY)
+check("index: removal the day after keeps the trip", idx2.route_type("1090L23743C5") == "2")
+check("index: removal the day after keeps the bus", idx2.route_type("4190L84931C2") == "3")
+check("index: size with the later removal", len(idx2) == 4)
+idx3 = rf.TripIndex.from_zip(static_zip(b"MON,20261019,2\n"), today=TODAY)
+check("index: removal on its only day drops it", idx3.route_type("1090L23743C5") is None)
+check("index: size with that removal", len(idx3) == 2)
 
 # --- the client, over a fake network -------------------------------------------------
 MADRID_A = (40.481907, -3.616286)

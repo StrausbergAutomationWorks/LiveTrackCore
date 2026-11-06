@@ -169,6 +169,65 @@ class Filter(unittest.TestCase):
         raw = gf.keep_service_window(zip_of(self.FILES), today=dt.date(2026, 11, 2))
         self.assertIn("T1", self.read(raw, "trips.txt"))
 
+    # --- services_on: a calendar_dates removal is for its own day (fixed in 0.2.26) ---------
+    CAL = ("service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n"
+           "S,1,1,1,1,1,1,1,20260101,20271231\n"
+           "MON,1,0,0,0,0,0,0,20260101,20271231\n")
+    WINDOW = [dt.date(2026, 11, 1), dt.date(2026, 11, 2), dt.date(2026, 11, 3)]   # Sunday to Tuesday
+
+    def on(self, dates, cal=CAL):
+        files = {"calendar.txt": cal} if cal is not None else {}
+        if dates is not None:
+            files["calendar_dates.txt"] = "service_id,date,exception_type\n" + dates
+        with zipfile.ZipFile(io.BytesIO(zip_of(files))) as z:
+            return gf.services_on(z, self.WINDOW)
+
+    def test_removal_on_the_last_day_keeps_the_others(self):
+        # Daily, removed on Tuesday only: it still runs Sunday and Monday. The old code dropped it.
+        self.assertIn("S", self.on("S,20261103,2\n"))
+
+    def test_removal_on_the_middle_day_keeps_the_others(self):
+        self.assertIn("S", self.on("S,20261102,2\n"))
+
+    def test_removal_on_every_day_drops_it(self):
+        self.assertNotIn("S", self.on("S,20261101,2\nS,20261102,2\nS,20261103,2\n"))
+
+    def test_removal_on_its_only_day_drops_it(self):
+        # MON runs Monday only; removed that Monday, it runs on none of the three days.
+        self.assertNotIn("MON", self.on("MON,20261102,2\n"))
+
+    def test_removal_on_a_day_it_does_not_run_changes_nothing(self):
+        self.assertIn("MON", self.on("MON,20261103,2\n"))
+
+    def test_added_on_one_day(self):
+        got = self.on("X,20261103,1\nY,20261104,1\n")
+        self.assertIn("X", got)
+        self.assertNotIn("Y", got)
+
+    def test_added_and_removed_on_different_days(self):
+        # Only calendar_dates: added Sunday, removed Tuesday. It runs Sunday.
+        self.assertIn("X", self.on("X,20261101,1\nX,20261103,2\n", cal=None))
+
+    def test_no_calendar_at_all(self):
+        self.assertIsNone(self.on(None, cal=None))
+
+    def test_padded_rows(self):
+        # Renfe pads every field (05_SHARED_LESSONS.md B5).
+        self.assertIn("S", self.on("S  ,20261103  ,2  \n"))
+
+    def test_window_keeps_a_trip_removed_on_its_last_day(self):
+        files = dict(self.FILES)
+        files["calendar_dates.txt"] = "service_id,date,exception_type\nS,20261103,2\n"
+        raw = gf.keep_service_window(zip_of(files), today=dt.date(2026, 11, 2))
+        self.assertIn("T1", self.read(raw, "trips.txt"))
+
+    def test_window_drops_a_trip_removed_on_all_three_days(self):
+        files = dict(self.FILES)
+        files["calendar_dates.txt"] = ("service_id,date,exception_type\n"
+                                       "S,20261101,2\nS,20261102,2\nS,20261103,2\n")
+        raw = gf.keep_service_window(zip_of(files), today=dt.date(2026, 11, 2))
+        self.assertNotIn("T1", self.read(raw, "trips.txt"))
+
     def test_not_imported_with_gtfs(self):
         code = ("import sys; sys.path.insert(0, %r); import saw_livetrack.gtfs; "
                 "print('saw_livetrack.gtfs.filter' in sys.modules)" % os.path.join(ROOT, "src"))

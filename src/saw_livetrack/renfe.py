@@ -211,17 +211,22 @@ class TripIndex:
         days = [today + _dt.timedelta(days=d) for d in (-1, 0, 1)]
         cal = list(_rows(z, "calendar.txt"))
         dates = list(_rows(z, "calendar_dates.txt"))
+        # Day by day, as saw_livetrack.gtfs.filter.services_on: until 0.2.26 one set ran
+        # across the three days, so a removal dated one day also dropped a service the
+        # calendar ran on the other two. Not imported from there: importing
+        # saw_livetrack.gtfs loads its realtime module, which this one does not need.
         on = set()
         for day in days:
             wd, ymd = _WEEKDAYS[day.weekday()], day.strftime("%Y%m%d")
-            on |= {r["service_id"] for r in cal if r.get("service_id") and r.get(wd) == "1"
-                   and r.get("start_date", "") <= ymd <= r.get("end_date", "")}
+            that_day = {r["service_id"] for r in cal if r.get("service_id") and r.get(wd) == "1"
+                        and r.get("start_date", "") <= ymd <= r.get("end_date", "")}
             for r in dates:
                 if r.get("date") == ymd and r.get("service_id"):
                     if r.get("exception_type") == "1":
-                        on.add(r["service_id"])
+                        that_day.add(r["service_id"])
                     elif r.get("exception_type") == "2":
-                        on.discard(r["service_id"])
+                        that_day.discard(r["service_id"])
+            on |= that_day
         rtype = {r["route_id"]: r.get("route_type", "") for r in _rows(z, "routes.txt")
                  if r.get("route_id")}
         out = {}
