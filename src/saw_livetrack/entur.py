@@ -834,7 +834,7 @@ class EnturClient:
 
 
 # --------------------------------------------------------------------------
-# Oslo's tunnels, where Entur's fixes go dark (0.2.28)
+# Norway's tunnels, where Entur's fixes go dark (Oslo's 0.2.28, Ulriken 0.2.30)
 # --------------------------------------------------------------------------
 # Hoisted from Live Track Intercity Rail (sources/entur.py at cee6997, verbatim) when Live Track Commuter Rail became
 # the second consumer (Lee 2026-11-07 18:10: "the long tunnels around Oslo should be handled like the tunnel in
@@ -843,9 +843,12 @@ class EnturClient:
 # in s, passages measured). MEASURED on the capture's first 2.6 hours (2026-11-07 21:34Z-00:10Z; bin\\no_tunnels.txt,
 # no_tunnels2.txt): every place a Vy or Go-Ahead train's fix stood still 60 s or more and then came back 3 km or more
 # away, clustered within 600 m; the freeze fixes spread up to 534 m (Oslo S), the comebacks up to 690 m; quickest among
-# passages under 200 km/h straight (all were). Oslo's tunnels only: Ulriken in Bergen measured the same (Arna-Bergen
-# 270 s, Bergen-Arna 270 s), left out. Flytoget was not in that capture: its trains run Lieraasen, Sandvika-Asker,
-# Lysaker-Sandvika, Oslotunnelen and Romeriksporten on the same tracks, not measured for it.
+# passages under 200 km/h straight (all were). Ulriken in Bergen was measured the same way (Arna-Bergen 7 passages,
+# Bergen-Arna 5 clean of 6, quickest 270 s each way, straight 7,410 m and 7,392 m) and left out of 0.2.28, which held
+# Oslo's tunnels only; ADDED in 0.2.30 (Lee 2026-11-08, after Live Track Commuter Rail's L4 train 2661 froze 6 min at
+# Arna and came back 7.4 km on at Fløen, within ~60 m and ~160 m of these rows; Commuter Rail SSOT 12). Flytoget was not
+# in that capture: its trains run Lieraasen, Sandvika-Asker, Lysaker-Sandvika, Oslotunnelen and Romeriksporten on the
+# same tracks, not measured for it.
 TUNNELS = (
     ("oslotunnelen_w", (59.91168, 10.75219), (59.92012, 10.68731), 211.0, 14),     # Oslo S - Nationaltheatret - Skøyen
     ("oslotunnelen_e", (59.91861, 10.69489), (59.91059, 10.75485), 241.0, 13),
@@ -861,6 +864,8 @@ TUNNELS = (
     ("lieraasen_e", (59.76489, 10.29439), (59.83149, 10.43232), 269.0, 6),
     ("follobanen_s", (59.90637, 10.76614), (59.72809, 10.83911), 479.0, 7),        # Oslo S to Ski
     ("follobanen_n", (59.73246, 10.84221), (59.90813, 10.76382), 479.0, 7),
+    ("ulriken_w", (60.41922, 5.46292), (60.38476, 5.34756), 270.0, 7),            # Arna to Bergen (0.2.30)
+    ("ulriken_e", (60.38282, 5.35280), (60.41960, 5.46464), 270.0, 5),            # Bergen to Arna (0.2.30)
 )
 # A frozen fix this near a tunnel's way in is taken as going in (the freeze fixes spread up to 534 m), or one already
 # inside it: its distances to the way in and to the comeback point add up to at most TUNNEL_ALONG_X times theirs

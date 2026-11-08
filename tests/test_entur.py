@@ -613,9 +613,12 @@ class TestTunnels(unittest.TestCase):
     def row(self, tid):
         return next(t for t in entur.TUNNELS if t[0] == tid)
 
+    BERGEN = (60.39012, 5.334254)     # Bergen stasjon, NSR:Quay:109126 (Vy's timetable)
+    ARNA = (60.41962, 5.46451)        # Arna stasjon, NSR:Quay:659
+
     def test_table_shape(self):
-        self.assertEqual(len(entur.TUNNELS), 14)
-        self.assertEqual(len({t[0] for t in entur.TUNNELS}), 14)
+        self.assertEqual(len(entur.TUNNELS), 16)
+        self.assertEqual(len({t[0] for t in entur.TUNNELS}), 16)
         for t in entur.TUNNELS:
             self.assertGreater(entur.metres(t[1], t[2]), 3000.0)
             self.assertGreater(t[3], 0)
@@ -639,7 +642,26 @@ class TestTunnels(unittest.TestCase):
         self.assertGreater(entur.metres(inside, r[1]), entur.TUNNEL_ENTRY_M)
         self.assertEqual(entur.tunnel_at(inside, self.OSLO_S, (59.95322, 11.04468))[0], "romeriksporten_e")
 
+    def test_ulriken(self):
+        # 0.2.30. L4 train 2661, 2026-11-08: its fix froze at 60.41945, 5.46386 leaving Arna for Bergen (19:12:42Z)
+        # and came back at 60.38400, 5.35040 (19:18:42Z).
+        self.assertEqual(entur.tunnel_at((60.41945, 5.46386), self.ARNA, self.BERGEN)[0], "ulriken_w")
+        self.assertEqual(entur.tunnel_at((60.38282, 5.35280), self.BERGEN, self.ARNA)[0], "ulriken_e")
+        # Come out at Fløen going to Bergen: not sent back in; and the other way's way in is not this way's.
+        self.assertIsNone(entur.tunnel_at((60.38400, 5.35040), self.ARNA, self.BERGEN))
+        self.assertIsNone(entur.tunnel_at((60.41945, 5.46386), self.BERGEN, self.ARNA))
+        w = self.row("ulriken_w")
+        self.assertEqual((w[3], w[4]), (270.0, 7))
+        self.assertAlmostEqual(entur.metres(w[1], w[2]), 7410.0, delta=15.0)
+        e = self.row("ulriken_e")
+        self.assertEqual((e[3], e[4]), (270.0, 5))
+        self.assertAlmostEqual(entur.metres(e[1], e[2]), 7392.0, delta=15.0)
+        mid = ((w[1][0] + w[2][0]) / 2, (w[1][1] + w[2][1]) / 2)
+        self.assertEqual(entur.tunnel_at(mid, self.ARNA, self.BERGEN)[0], "ulriken_w")
+        self.assertAlmostEqual(entur.tunnel_time(mid, w), 135.0, delta=2.0)
+
     def test_far_and_missing(self):
+        # Bergen stasjon, 1.3 km behind Ulriken's eastbound way in (outside TUNNEL_ENTRY_M, not inside): none.
         self.assertIsNone(entur.tunnel_at((60.39, 5.33), (60.39, 5.33), (60.42, 5.46)))
         self.assertIsNone(entur.tunnel_at((59.91168, 10.75219), None, self.NATIONALTHEATRET))
         self.assertIsNone(entur.tunnel_at((59.91168, 10.75219), self.OSLO_S, None))
