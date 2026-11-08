@@ -11,6 +11,8 @@ railroad: VYG Vy, GOA Go-Ahead Norge, FLT Flytoget; SJN SJ Nord publishes no pos
     realtime/v2/vehicles/graphql, vehicles(codespaceId)             positions (POST, GraphQL)
     realtime/v1/gtfs-rt/trip-updates?datasource=<codespace>        GTFS-Realtime trip updates
     marduk-production/outbound/gtfs/rb_<codespace>-aggregated-gtfs.zip   the timetable (VYG 66 MB, GOA 17 MB)
+and for SJ Nord, which has no positions (0.2.29; et(), et_for_consumer()):
+    realtime/v1/rest/et?datasetId=BNR                              SIRI ET: every call's aimed, expected, actual times
 `?datasetId=` does NOT filter the GTFS-Realtime files (it returned the whole country, measured 2026-11-07); `datasource`
 does.
 
@@ -104,6 +106,19 @@ SJ_NORD = "SJN"
 # Codespaces with GTFS-Realtime positions (Entur's table and 2026-11-07's reads agree). SJ Nord has none.
 CODESPACES = (VY, GO_AHEAD, FLYTOGET)
 
+# SIRI ESTIMATED TIMETABLE (0.2.29): a railroad that publishes NO position, only its calls' aimed, expected and actual
+# times, through Bane NOR's dataset. SJ Nord (Lee 2026-11-08 10:59 CST: "Build SJ Nord from its expected times, actuals
+# as a correction"; Intercity SSOT 8.8, "SJ NORD"). MEASURED on the capture of 2026-11-07 21:34Z to 2026-11-08 11:04Z
+# (811 polls, bin\\no_sjn_analyse2.txt): every body is a FULL snapshot (37-64 SJ Nord journeys, about 1.3 MB), not a
+# delta; `DatedVehicleJourneyRef` ('453:2026-11-07') sits directly on EstimatedVehicleJourney, with no
+# FramedVehicleJourneyRef. Entur's SIRI REST allows 4 requests a minute: read once per ET_TTL_S for every consumer.
+ET_URL = "https://api.entur.io/realtime/v1/rest/et?datasetId=%s&maxSize=3000"
+ET_DATASETS = {SJ_NORD: "BNR"}
+ET_CODESPACES = frozenset(ET_DATASETS)
+ET_TTL_S = 60.0
+ET_MAX_BYTES = 16 * 1024 * 1024
+_SIRI = "{http://www.siri.org.uk/siri}"
+
 INTERCITY_LETTERS = frozenset({"F", "RE", "RX", "R"})
 COMMUTER_LETTERS = frozenset({"L"})
 COMMUTER_CODESPACES = frozenset({FLYTOGET})
@@ -143,6 +158,16 @@ def _check_consumer(consumer):
 def _check_codespace(codespace):
     if codespace not in CODESPACES:
         raise ValueError("unknown or positionless codespace %r" % (codespace,))
+
+
+def _check_et(codespace):
+    if codespace not in ET_CODESPACES:
+        raise ValueError("no SIRI ET dataset for codespace %r" % (codespace,))
+
+
+def _check_known(codespace):
+    if codespace not in CODESPACES and codespace not in ET_CODESPACES:
+        raise ValueError("unknown codespace %r" % (codespace,))
 
 
 def codespace_of(trip_id):
@@ -373,6 +398,83 @@ def _new_feed(src):
 
 
 # --------------------------------------------------------------------------
+# SIRI Estimated Timetable (0.2.29)
+# --------------------------------------------------------------------------
+
+ET_TIMES = ("aimed_arrival", "aimed_departure", "expected_arrival", "expected_departure", "actual_arrival",
+            "actual_departure")
+_ET_TAGS = ("AimedArrivalTime", "AimedDepartureTime", "ExpectedArrivalTime", "ExpectedDepartureTime",
+            "ActualArrivalTime", "ActualDepartureTime")
+
+
+def siri_time(value):
+    """A SIRI time ('2026-11-07T20:37:41+01:00', '2026-11-07T22:34:05.904040342+01:00') -> epoch seconds; None when
+    absent, unreadable, or without a UTC offset (a local time would be read in the host's zone)."""
+    s = value.strip() if isinstance(value, str) else ""
+    if not s:
+        return None
+    try:
+        # Python 3.11+ reads any number of fractional digits (Bane NOR sends nanoseconds) and truncates past six.
+        d = datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return d.timestamp() if d.tzinfo is not None else None
+
+
+def _text(el, tag):
+    found = el.find(_SIRI + tag)
+    return (found.text or "").strip() if found is not None and found.text else ""
+
+
+def et_journeys(raw, codespace):
+    """A SIRI ET body -> [journey] for `codespace` (its LineRef 'SJN:Line:R70'), in the body's order. Raises
+    FeedUnavailable when the body is no XML. Each journey:
+        id         DatedVehicleJourneyRef, '453:2026-11-07' (directly on the journey in Bane NOR's dataset)
+        number     '453' (the id's head, else VehicleRef); journeys with neither are left out
+        date       '20261107' (the id's tail), '' without one
+        line       'R70', None when LineRef's tail is no line code
+        cancelled  the whole journey is (Cancellation)
+        calls      [{order, stop (StopPointRef, the quay), name, recorded (a RecordedCall), cancelled, and the six
+                   ET_TIMES as epoch seconds or None}], by Order
+    Nothing is decided here: which time to believe is the consumer's."""
+    import xml.etree.ElementTree as ET
+
+    try:
+        root = ET.fromstring(raw)
+    except ET.ParseError as err:
+        raise FeedUnavailable("undecodable SIRI ET body") from err
+    prefix = codespace + ":"
+    out = []
+    for ej in root.iter(_SIRI + "EstimatedVehicleJourney"):
+        line_ref = _text(ej, "LineRef")
+        if not line_ref.startswith(prefix):
+            continue
+        dvj = _text(ej, "DatedVehicleJourneyRef")
+        head, _, tail = dvj.partition(":")
+        number = head if head.isdigit() else _text(ej, "VehicleRef")
+        if not number.isdigit():
+            continue
+        calls = []
+        for tag, recorded in (("RecordedCall", True), ("EstimatedCall", False)):
+            for c in ej.iter(_SIRI + tag):
+                try:
+                    order = int(_text(c, "Order"))
+                except ValueError:
+                    continue
+                call = {"order": order, "stop": _text(c, "StopPointRef"), "name": _text(c, "StopPointName"),
+                        "recorded": recorded, "cancelled": _text(c, "Cancellation").lower() == "true"}
+                for key, t in zip(ET_TIMES, _ET_TAGS):
+                    call[key] = siri_time(_text(c, t))
+                calls.append(call)
+        calls.sort(key=lambda c: c["order"])
+        tail_line = line_ref.rsplit(":", 1)[-1]
+        out.append({"id": dvj or number, "number": str(int(number)), "date": ymd(tail),
+                    "line": tail_line if letters(tail_line) else None,
+                    "cancelled": _text(ej, "Cancellation").lower() == "true", "calls": calls})
+    return out
+
+
+# --------------------------------------------------------------------------
 # The client
 # --------------------------------------------------------------------------
 
@@ -412,10 +514,13 @@ class EnturClient:
         self._wanted = set()
         for consumer, codespace in claims:
             _check_consumer(consumer)
-            _check_codespace(codespace)
+            _check_known(codespace)
             self._wanted.add((consumer, codespace))
         self._feeds = {}             # codespace -> {consumer: (vp, tu)}
         self._fetched_at = {}        # codespace -> time
+        self.et_ttl_s = ET_TTL_S
+        self._et = {}                # ET codespace -> {consumer: [journey]}
+        self._et_at = {}             # ET codespace -> time
         self._routes = {}            # codespace -> route_table
         self._version = {}           # codespace -> Last-Modified
         self._static_at = {}
@@ -438,7 +543,7 @@ class EnturClient:
     def register(self, consumer, codespace):
         """Serve `consumer` in `codespace` from now on. True if it is new. Never waits for a fetch."""
         _check_consumer(consumer)
-        _check_codespace(codespace)
+        _check_known(codespace)
         with self._state:
             if (consumer, codespace) in self._wanted:
                 return False
@@ -448,7 +553,7 @@ class EnturClient:
     def unregister(self, consumer, codespace):
         """Stop serving `consumer` in `codespace`. True if it was registered. Never waits."""
         _check_consumer(consumer)
-        _check_codespace(codespace)
+        _check_known(codespace)
         with self._state:
             if (consumer, codespace) not in self._wanted:
                 return False
@@ -674,6 +779,48 @@ class EnturClient:
             # Registered after this snapshot was built.
             feeds = self.snapshot(codespace, force=True)
         return feeds[consumer]
+
+    def et(self, codespace, force=False):
+        """{consumer: [journey]} (et_journeys) for the consumers registered in an ET codespace (SJ Nord), each journey
+        routed to ONE consumer by its line's letter, as a vehicle is (consumer_of). Read at most once per et_ttl_s for
+        all of them (Entur's SIRI REST: 4 requests a minute). Raises RateLimited or FeedUnavailable; a failure keeps
+        nothing, so the next call asks again."""
+        _check_et(codespace)
+        self._ensure_static(codespace)
+        with self._lock:
+            now = self._clock()
+            at = self._et_at.get(codespace)
+            if not force and codespace in self._et and at is not None and now - at < self.et_ttl_s:
+                return self._et[codespace]
+            url = ET_URL % ET_DATASETS[codespace]
+            self.fetch_count += 1
+            raw = _get(url, self.user, self.timeout, self._opener)[0]
+            if len(raw) > ET_MAX_BYTES:
+                raise FeedUnavailable("more than %d bytes from %s" % (ET_MAX_BYTES, url))
+            journeys = et_journeys(raw, codespace)
+            with self._state:
+                wanted = frozenset(c for c, cs in self._wanted if cs == codespace)
+            out = {c: [] for c in wanted}
+            for j in journeys:
+                c = consumer_of(codespace, j["line"], j["id"])
+                if c is None:
+                    self.unrouted += 1
+                elif c in out:
+                    out[c].append(j)
+            self._et[codespace] = out
+            self._et_at[codespace] = now
+            return out
+
+    def et_for_consumer(self, consumer, codespace, force=False):
+        """[journey] for one registered consumer in an ET codespace (et)."""
+        _check_consumer(consumer)
+        _check_et(codespace)
+        if (consumer, codespace) not in self.claims:
+            raise ValueError("consumer %r is not registered in %s with this client" % (consumer, codespace))
+        got = self.et(codespace, force=force)
+        if consumer not in got:
+            got = self.et(codespace, force=True)
+        return got[consumer]
 
     def stats(self):
         """Low-cardinality state for a diagnostic."""

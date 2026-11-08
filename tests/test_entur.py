@@ -213,8 +213,10 @@ class TestRules(unittest.TestCase):
         self.assertEqual(entur.ymd(None), "")
 
     def test_codespace_checked(self):
+        # SJ Nord, positionless, may be claimed since 0.2.29: for its SIRI ET only (TestEtClient).
+        entur.EnturClient([(entur.INTERCITY, "SJN")])
         with self.assertRaises(ValueError):
-            entur.EnturClient([(entur.INTERCITY, "SJN")])
+            entur.EnturClient([(entur.INTERCITY, "XYZ")])
         with self.assertRaises(ValueError):
             entur.EnturClient([("freight", "VYG")])
         with self.assertRaises(ValueError):
@@ -669,6 +671,156 @@ class TestTunnels(unittest.TestCase):
         self.assertAlmostEqual(entur.metres((60.0, 10.0), (60.0, 10.0)), 0.0)
         self.assertAlmostEqual(entur.metres((60.0, 10.0), (60.01, 10.0)), 1111.95, places=0)
         self.assertAlmostEqual(entur.metres((60.0, 10.0), (60.0, 10.02)), 1111.95, places=0)
+
+
+# --------------------------------------------------------------------------
+# SIRI ET (0.2.29): SJ Nord, which publishes no positions
+# --------------------------------------------------------------------------
+
+ET_URL_BNR = entur.ET_URL % "BNR"
+
+
+def siri_body(*journeys):
+    """A Bane NOR-shaped SIRI ET body, as captured 2026-11-07/08: DatedVehicleJourneyRef directly on the journey."""
+    def call(tag, order, quay, name, **times):
+        t = "".join(f"<{k}>{v}</{k}>" for k, v in times.items())
+        return (f"<{tag}><StopPointRef>{quay}</StopPointRef><Order>{order}</Order><StopPointName>{name}</StopPointName>"
+                f"{t}</{tag}>")
+    out = []
+    for line, dvj, recorded, estimated, extra in journeys:
+        out.append(f"<EstimatedVehicleJourney><LineRef>{line}</LineRef><DatedVehicleJourneyRef>{dvj}"
+                   f"</DatedVehicleJourneyRef>{extra}<RecordedCalls>{''.join(call('RecordedCall', *c[:3], **c[3]) for c in recorded)}"
+                   f"</RecordedCalls><EstimatedCalls>{''.join(call('EstimatedCall', *c[:3], **c[3]) for c in estimated)}"
+                   f"</EstimatedCalls></EstimatedVehicleJourney>")
+    return ('<?xml version="1.0" encoding="UTF-8"?><Siri xmlns="http://www.siri.org.uk/siri" version="2.0">'
+            "<ServiceDelivery><EstimatedTimetableDelivery><EstimatedJourneyVersionFrame>" + "".join(out) +
+            "</EstimatedJourneyVersionFrame></EstimatedTimetableDelivery></ServiceDelivery></Siri>").encode("utf-8")
+
+
+SJN_453 = ("SJN:Line:R70", "453:2026-11-07",
+           [(2, "NSR:Quay:618", "Kvål", {"AimedArrivalTime": "2026-11-07T20:41:30+01:00",
+                                           "ActualArrivalTime": "2026-11-07T20:40:42.904040342+01:00"}),
+            (1, "NSR:Quay:664", "Ler", {"AimedDepartureTime": "2026-11-07T20:37:00+01:00",
+                                         "ActualDepartureTime": "2026-11-07T20:37:41+01:00"})],
+           [(3, "NSR:Quay:111911", "Melhus", {"AimedArrivalTime": "2026-11-07T20:47:00+01:00",
+                                               "ExpectedArrivalTime": "2026-11-07T20:47:30+01:00",
+                                               "Cancellation": "false"}),
+            (4, "NSR:Quay:999", "Heimdal", {"AimedArrivalTime": "2026-11-07T20:55:00+01:00",
+                                             "Cancellation": "true"})], "<VehicleRef>453</VehicleRef>")
+SJN_L1 = ("SJN:Line:L9", "9001:2026-11-08", [], [], "")
+SJV_F1 = ("SJV:Line:F1", "40:2026-11-07", [], [(1, "NSR:Quay:1", "Oslo S", {"AimedDepartureTime":
+                                                                             "2026-11-07T20:00:00+01:00"})], "")
+SJN_CANCELLED = ("SJN:Line:F6", "405:2026-11-08", [], [(1, "NSR:Quay:2", "Oslo S", {})],
+                 "<Cancellation>true</Cancellation>")
+SJN_NO_LINE = ("SJN:Line:-", "7777:2026-11-08", [], [], "")
+SJN_NO_NUMBER = ("SJN:Line:R70", "x:2026-11-08", [], [], "")
+
+
+class TestSiriEt(unittest.TestCase):
+    def test_time(self):
+        self.assertEqual(entur.siri_time("2026-11-07T20:37:41+01:00"), 1794080261.0)
+        self.assertAlmostEqual(entur.siri_time("2026-11-07T22:34:05.904040342+01:00"), 1794087245.904040, places=5)
+        self.assertEqual(entur.siri_time("2026-11-07T19:37:41Z"), 1794080261.0)
+        for bad in (None, "", "  ", "2026-11-07T20:37:41", "soon", 5):
+            self.assertIsNone(entur.siri_time(bad), bad)
+
+    def test_journeys(self):
+        js = entur.et_journeys(siri_body(SJN_453, SJV_F1, SJN_CANCELLED, SJN_NO_LINE, SJN_NO_NUMBER), "SJN")
+        self.assertEqual([j["id"] for j in js], ["453:2026-11-07", "405:2026-11-08", "7777:2026-11-08"])
+        j = js[0]
+        self.assertEqual((j["number"], j["date"], j["line"], j["cancelled"]), ("453", "20261107", "R70", False))
+        self.assertEqual([c["order"] for c in j["calls"]], [1, 2, 3, 4])    # by Order, whatever the body's order
+        ler, kval, melhus, heimdal = j["calls"]
+        self.assertIs(heimdal["cancelled"], True)
+        self.assertEqual((ler["stop"], ler["name"], ler["recorded"]), ("NSR:Quay:664", "Ler", True))
+        self.assertEqual(ler["actual_departure"], 1794080261.0)
+        self.assertIsNone(ler["expected_departure"])
+        self.assertEqual(kval["name"], "Kvål")
+        self.assertAlmostEqual(kval["actual_arrival"], 1794080442.904040, places=5)
+        self.assertEqual((melhus["recorded"], melhus["cancelled"], melhus["expected_arrival"]),
+                         (False, False, 1794080850.0))
+        self.assertEqual(set(entur.ET_TIMES) <= set(melhus), True)
+        self.assertIs(js[1]["cancelled"], True)
+        self.assertIsNone(js[2]["line"])
+        self.assertEqual(entur.et_journeys(siri_body(SJV_F1), "SJV")[0]["number"], "40")
+
+    def test_vehicle_ref_when_the_id_has_no_number(self):
+        body = siri_body(("SJN:Line:R70", "x:2026-11-08", [], [], "<VehicleRef>0461</VehicleRef>"))
+        j, = entur.et_journeys(body, "SJN")
+        self.assertEqual((j["number"], j["id"]), ("461", "x:2026-11-08"))
+
+    def test_not_xml(self):
+        with self.assertRaises(entur.FeedUnavailable):
+            entur.et_journeys(b"<Siri", "SJN")
+
+
+class TestEtClient(unittest.TestCase):
+    def client(self, body=None, clock=None, claims=((entur.INTERCITY, "SJN"),)):
+        op = Opener({ET_URL_BNR: siri_body(SJN_453, SJN_NO_LINE, SJN_L1) if body is None else body})
+        return entur.EnturClient(list(claims), opener=op, clock=clock or (lambda: float(T0))), op
+
+    def test_sjn_is_known_for_et_only(self):
+        c, _ = self.client()
+        self.assertIn((entur.INTERCITY, "SJN"), c.claims)
+        with self.assertRaises(ValueError):
+            c.for_consumer(entur.INTERCITY, "SJN")          # no positions
+        with self.assertRaises(ValueError):
+            c.snapshot("SJN")
+        with self.assertRaises(ValueError):
+            c.et("VYG")                                     # no ET dataset
+        with self.assertRaises(ValueError):
+            c.register(entur.INTERCITY, "XXX")
+        self.assertTrue(c.register(entur.COMMUTER, "SJN"))
+        self.assertTrue(c.unregister(entur.COMMUTER, "SJN"))
+
+    def test_routed_by_line_letter_and_read_once_a_minute(self):
+        now = [float(T0)]
+        c, op = self.client(clock=lambda: now[0])
+        js = c.et_for_consumer(entur.INTERCITY, "SJN")
+        # The journey with no line goes to nobody; the L line to the commuter consumer, not registered here.
+        self.assertEqual([j["id"] for j in js], ["453:2026-11-07"])
+        self.assertEqual(c.unrouted, 1)
+        self.assertEqual(op.calls[0][1], ET_URL_BNR)
+        headers = {k.lower(): v for k, v in op.calls[0][2].items()}
+        self.assertEqual(headers["et-client-name"], entur.CLIENT_NAME)
+        now[0] += 59           # Entur's SIRI REST: 4 requests a minute; one a minute here
+        c.et_for_consumer(entur.INTERCITY, "SJN")
+        self.assertEqual(len(op.calls), 1)
+        now[0] += 1
+        c.et_for_consumer(entur.INTERCITY, "SJN")
+        self.assertEqual(len(op.calls), 2)
+        c.et_for_consumer(entur.INTERCITY, "SJN", force=True)
+        self.assertEqual(len(op.calls), 3)
+
+    def test_unregistered_consumer_refused(self):
+        c, _ = self.client()
+        with self.assertRaises(ValueError):
+            c.et_for_consumer(entur.COMMUTER, "SJN")
+
+    def test_registered_after_a_read_gets_one(self):
+        c, op = self.client(claims=((entur.INTERCITY, "SJN"),))
+        c.et("SJN")
+        c.register(entur.COMMUTER, "SJN")
+        self.assertEqual([j["id"] for j in c.et_for_consumer(entur.COMMUTER, "SJN")], ["9001:2026-11-08"])
+        self.assertEqual(len(op.calls), 2)
+
+    def test_failures_raise_and_keep_nothing(self):
+        for status, err in ((429, entur.RateLimited), (503, entur.FeedUnavailable)):
+            c = entur.EnturClient([(entur.INTERCITY, "SJN")], opener=Opener({ET_URL_BNR: status}),
+                                  clock=lambda: float(T0))
+            with self.assertRaises(err):
+                c.et_for_consumer(entur.INTERCITY, "SJN")
+        c, op = self.client(body=b"not xml")
+        with self.assertRaises(entur.FeedUnavailable):
+            c.et_for_consumer(entur.INTERCITY, "SJN")
+        op.routes[ET_URL_BNR] = siri_body(SJN_453)
+        self.assertEqual(len(c.et_for_consumer(entur.INTERCITY, "SJN")), 1)     # asked again at once
+
+    def test_too_big(self):
+        # A good body, too big: refused before it is read.
+        c, _ = self.client(body=siri_body(SJN_453) + b" " * entur.ET_MAX_BYTES)
+        with self.assertRaises(entur.FeedUnavailable):
+            c.et("SJN")
 
 
 if __name__ == "__main__":
