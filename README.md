@@ -159,6 +159,26 @@ given up on after 10 minutes of HTTP 401 or 403 from both feeds with no success 
 then `AuthRefused` when none is left: one or two 401s are normal here. Share one
 client per Home Assistant with `reference/shared_tfnsw.py` (0.2.23). Needs the `gtfs` extra.
 
+## `saw_livetrack.entur` - Norway's trains (Entur)
+
+One poller for every Live Track integration that draws Norwegian trains, keyless (Entur asks
+each consumer for an `ET-Client-Name`, sent as one fixed name). Polled per CODESPACE, the
+railroad (`VYG` Vy, `GOA` Go-Ahead Norge, `FLT` Flytoget; SJ Nord publishes no positions),
+and only the codespaces some consumer registered: `register(consumer, codespace)`. Every
+train is route type 100, so each vehicle goes to ONE consumer by its line's letter:
+`intercity` for F, RE, RX and R lines, `commuter` for L lines and all of Flytoget, `bus`
+for rail-replacement buses (trip ids `BUS-<n>` and `B<n>`, which ride on rail lines). The
+line is the route's short name from the timetable, or a route id that carries it
+(`VYG:Line:R13`); anything else goes to nobody until the timetable is on disk.
+`for_consumer(consumer, codespace)` returns that consumer's positions and trip updates,
+cleaned once for everyone: `start_date` rewritten to `YYYYMMDD` (the trip updates often
+send `YYYY-MM-DD`), and a trip with a position keeps only that run's updates. Each
+codespace's timetable (Vy's is 66 MB) goes to `.storage/saw_entur_<codespace>.zip` on its
+own thread, checked by HEAD at most daily; `static_version(codespace)`,
+`static_path(codespace)` and `routes(codespace)` let each consumer distill its own cut.
+Share one client per Home Assistant with `reference/shared_entur.py` (0.2.27). Needs the
+`gtfs` extra.
+
 ## `saw_livetrack.transport_vic` - Transport Victoria
 
 The GTFS Schedule is one zip of numbered folders, and a consumer takes only its own
@@ -332,6 +352,10 @@ both licensed under
 [Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/). Each user brings their own key;
 nothing here redistributes the data.
 
+Norwegian rail data (`saw_livetrack.entur`): contains data under the
+[Norwegian licence for Open Government data (NLOD)](https://data.norge.no/nlod/en/2.0)
+distributed by **[Entur](https://developer.entur.org)**. Nothing here redistributes the data.
+
 The enforcement-aircraft list (`saw_livetrack.enforcement_list`) contains
 information from **[EnforcementAircraft](https://github.com/StrausbergAutomationWorks/EnforcementAircraft)**,
 which is made available under the
@@ -374,6 +398,7 @@ python -m unittest tests.test_adsb_poll
 python -m unittest tests.test_aisstream
 python -m unittest tests.test_enforcement_vessels
 python -m unittest tests.test_zones
+python -m unittest tests.test_entur tests.test_shared_entur
 ```
 
 The first four, and `test_aircraft_icons.py`, are scripts that exit non-zero on a failed check; run them
