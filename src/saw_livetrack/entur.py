@@ -50,6 +50,10 @@ FEED QUIRKS handled here once, for every consumer:
   at bus quays (stops.txt vehicle_type 700; Vy 1,403 of 1,403, Go-Ahead 20 of 20) and no other trip stops at one (Vy
   5,358, Go-Ahead 612, all vehicle_type 100). They are the bus consumer's, never a train's.
 * No speed on any row; entity.id and vehicle.label are not looked at.
+* FLYTOGET'S RUN DATE IS IN ITS TRIP ID, and nowhere else (MEASURED 2026-11-08, Commuter Rail SSOT 12): its vehicleId is
+  the unit (71-08), it has no datedServiceJourney, and its trip id ends in the date
+  (FLT:ServiceJourney:1-2614-3724-20261108), as its trip updates' start_date does. Before 0.2.28 its positions carried
+  no start_date, so every trip update of a train in the feed was dropped as another run's (0 of 10 trains kept one).
 """
 
 from __future__ import annotations
@@ -58,6 +62,7 @@ import csv
 import datetime
 import io
 import json
+import math
 import os
 import re
 import threading
@@ -115,6 +120,7 @@ _LOCAL = re.compile(r"^[A-Z]{3}:ServiceJourney:(.+)$")
 _BUS = re.compile(r"^(?:B(?:US-)?\d|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})", re.IGNORECASE)
 _DSJ_DATE = re.compile(r"_(\d{2})-(\d{2})-(\d{2})$")
 _VEHICLE_DATE = re.compile(r"-(\d{4})-(\d{2})-(\d{2})$")
+_TRIP_DATE = re.compile(r"-(\d{4})(\d{2})(\d{2})$")
 
 
 class EnturError(Exception):
@@ -159,14 +165,26 @@ def is_bus(trip_id):
     return bool(_BUS.match(local_id(trip_id)))
 
 
-def operating_date(dated_journey_id, vehicle_id=None):
+def _real_date(y, m, d):
+    try:
+        datetime.date(int(y), int(m), int(d))
+    except ValueError:
+        return ""
+    return y + m + d
+
+
+def operating_date(dated_journey_id, vehicle_id=None, trip_id=None):
     """YYYYMMDD from a datedServiceJourney id ('VYG:DatedServiceJourney:1033_ASR-KVG_26-11-07' -> '20261107'), else
-    from a Vy vehicle id ('1672-2026-11-07'); '' with neither."""
+    from a Vy vehicle id ('1672-2026-11-07'), else from a trip id ending in the date, as Flytoget's do
+    ('FLT:ServiceJourney:1-2614-3724-20261108'); '' with none, or with a date that is no date."""
     m = _DSJ_DATE.search(dated_journey_id.strip()) if isinstance(dated_journey_id, str) else None
     if m:
         return "20" + "".join(m.groups())
     m = _VEHICLE_DATE.search(vehicle_id.strip()) if isinstance(vehicle_id, str) else None
-    return "".join(m.groups()) if m else ""
+    if m:
+        return "".join(m.groups())
+    m = _TRIP_DATE.search(local_id(trip_id)) if isinstance(trip_id, str) else None
+    return _real_date(*m.groups()) if m else ""
 
 
 def letters(line):
@@ -331,7 +349,7 @@ def vehicles_feed(answer, now):
         e.vehicle.trip.trip_id = sj
         if line.get("lineRef"):
             e.vehicle.trip.route_id = line["lineRef"]
-        start = operating_date(dsj, vid)
+        start = operating_date(dsj, vid, sj)
         if start:
             e.vehicle.trip.start_date = start
         if vid:
@@ -666,3 +684,81 @@ class EnturClient:
         return {"timetables": versions, "timetable_routes": routes, "timetable_loading": loading,
                 "fetch_count": self.fetch_count, "dropped_other_runs": self.dropped_other_runs,
                 "unrouted": self.unrouted}
+
+
+# --------------------------------------------------------------------------
+# Oslo's tunnels, where Entur's fixes go dark (0.2.28)
+# --------------------------------------------------------------------------
+# Hoisted from Live Track Intercity Rail (sources/entur.py at cee6997, verbatim) when Live Track Commuter Rail became
+# the second consumer (Lee 2026-11-07 18:10: "the long tunnels around Oslo should be handled like the tunnel in
+# Helsinki"; Commuter Rail SSOT 12). A train's fix FREEZES where a tunnel takes its signal, for minutes, and the next
+# comes from the far end. Each way: (id, where its fixes freeze going in, where they come back, the quickest dark time
+# in s, passages measured). MEASURED on the capture's first 2.6 hours (2026-11-07 21:34Z-00:10Z; bin\\no_tunnels.txt,
+# no_tunnels2.txt): every place a Vy or Go-Ahead train's fix stood still 60 s or more and then came back 3 km or more
+# away, clustered within 600 m; the freeze fixes spread up to 534 m (Oslo S), the comebacks up to 690 m; quickest among
+# passages under 200 km/h straight (all were). Oslo's tunnels only: Ulriken in Bergen measured the same (Arna-Bergen
+# 270 s, Bergen-Arna 270 s), left out. Flytoget was not in that capture: its trains run Lieraasen, Sandvika-Asker,
+# Lysaker-Sandvika, Oslotunnelen and Romeriksporten on the same tracks, not measured for it.
+TUNNELS = (
+    ("oslotunnelen_w", (59.91168, 10.75219), (59.92012, 10.68731), 211.0, 14),     # Oslo S - Nationaltheatret - Skøyen
+    ("oslotunnelen_e", (59.91861, 10.69489), (59.91059, 10.75485), 241.0, 13),
+    ("lysaker_sandvika_w", (59.91486, 10.62438), (59.89459, 10.53044), 149.0, 11),
+    ("lysaker_sandvika_e", (59.89673, 10.53845), (59.91470, 10.62993), 148.0, 8),
+    ("sandvika_asker_w1", (59.88973, 10.50076), (59.86480, 10.45693), 89.0, 10),
+    ("sandvika_asker_w2", (59.86429, 10.45609), (59.83358, 10.43445), 89.0, 11),
+    ("sandvika_asker_e1", (59.83545, 10.43731), (59.87193, 10.46851), 119.0, 6),
+    ("sandvika_asker_e2", (59.87016, 10.46576), (59.89089, 10.51527), 91.0, 2),
+    ("romeriksporten_w", (59.95273, 11.02512), (59.90594, 10.79167), 329.0, 7),    # Lillestrøm side to Oslo S
+    ("romeriksporten_e", (59.90605, 10.79668), (59.95247, 11.03679), 331.0, 10),
+    ("lieraasen_w", (59.82812, 10.42795), (59.76262, 10.28762), 270.0, 9),         # Asker side to Drammen
+    ("lieraasen_e", (59.76489, 10.29439), (59.83149, 10.43232), 269.0, 6),
+    ("follobanen_s", (59.90637, 10.76614), (59.72809, 10.83911), 479.0, 7),        # Oslo S to Ski
+    ("follobanen_n", (59.73246, 10.84221), (59.90813, 10.76382), 479.0, 7),
+)
+# A frozen fix this near a tunnel's way in is taken as going in (the freeze fixes spread up to 534 m), or one already
+# inside it: its distances to the way in and to the comeback point add up to at most TUNNEL_ALONG_X times theirs
+# (measured: train 1673's fix froze 1.6 km into Romeriksporten, its two distances 1.017 times).
+TUNNEL_ENTRY_M = 700.0
+TUNNEL_ALONG_X = 1.05
+
+
+def metres(a, b):
+    """Ground distance in m between two (lat, lon), equirectangular (good to a fraction of a percent at these
+    distances)."""
+    la1, lo1, la2, lo2 = map(math.radians, (a[0], a[1], b[0], b[1]))
+    return 6371000.0 * math.hypot((lo2 - lo1) * math.cos((la1 + la2) / 2.0), la2 - la1)
+
+
+def ahead(a, b, e, c):
+    """Whether going from stop `a` to stop `b` is going the tunnel's way, from its way in `e` to its comeback `c`: the
+    two directions on the ground agree (a positive dot product, longitude scaled by the cosine of latitude). The first
+    rule (the next stop nearer the comeback than the stop left) let a train from Drammen to Oslo S into the WESTBOUND
+    Lysaker-Sandvika (Intercity's test found it)."""
+    k = math.cos(math.radians((a[0] + b[0]) / 2.0))
+    return (b[0] - a[0]) * (c[0] - e[0]) + (b[1] - a[1]) * k * k * (c[1] - e[1]) > 0
+
+
+def tunnel_at(pos, prev_pos, next_pos, tunnels=TUNNELS):
+    """The TUNNELS row a frozen fix at `pos` is going into, between the stop the train left (`prev_pos`) and its next
+    (`next_pos`), all (lat, lon): its way in within TUNNEL_ENTRY_M or the fix already inside, going the tunnel's way
+    (`ahead`, so a train come OUT at that point is not sent back in). The nearest way in; None with none, or without
+    both stops."""
+    if not prev_pos or not next_pos:
+        return None
+    best = None
+    for t in tunnels:
+        d, left = metres(pos, t[1]), metres(pos, t[2])
+        # Inside, and not already at the comeback point (a train standing there has come OUT).
+        inside = d + left <= TUNNEL_ALONG_X * metres(t[1], t[2]) and left > TUNNEL_ENTRY_M
+        if (d > TUNNEL_ENTRY_M and not inside) or not ahead(prev_pos, next_pos, t[1], t[2]):
+            continue
+        if best is None or d < best[0]:
+            best = (d, t)
+    return best[1] if best else None
+
+
+def tunnel_time(pos, tunnel):
+    """The quickest time from `pos` to the tunnel's comeback point: its quickest from the way in, in proportion to the
+    distance left (a fix that froze inside has less to go)."""
+    whole = metres(tunnel[1], tunnel[2])
+    return tunnel[3] * min(1.0, metres(pos, tunnel[2]) / whole) if whole > 0 else tunnel[3]

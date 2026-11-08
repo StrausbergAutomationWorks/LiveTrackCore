@@ -172,6 +172,19 @@ class TestRules(unittest.TestCase):
         self.assertEqual(entur.operating_date(None, "1672-2026-11-07"), "20261107")
         self.assertEqual(entur.operating_date("x", "72-04"), "")
         self.assertEqual(entur.operating_date(None, None), "")
+        # Flytoget: no datedServiceJourney, the unit as vehicle id, the date at the trip id's end (0.2.28).
+        self.assertEqual(entur.operating_date(None, "71-08", "FLT:ServiceJourney:1-2614-3724-20261108"), "20261108")
+        self.assertEqual(entur.operating_date(None, None, "1-2614-3724-20261231"), "20261231")
+        self.assertEqual(entur.operating_date("VYG:DatedServiceJourney:1_A-B_26-11-07", None,
+                                              "FLT:ServiceJourney:1-2614-3724-20261108"), "20261107")
+        self.assertEqual(entur.operating_date(None, "1672-2026-11-07", "x-20261108"), "20261107")
+        self.assertEqual(entur.operating_date(None, None, "FLT:ServiceJourney:1-2614-3724-20261340"), "")
+        self.assertEqual(entur.operating_date(None, None, "FLT:ServiceJourney:1-2614-3724-20261132"), "")
+        self.assertEqual(entur.operating_date(None, None, "VYG:ServiceJourney:1672_443368-R"), "")
+        self.assertEqual(entur.operating_date(None, None, UUID_BUS), "")
+        self.assertEqual(entur.operating_date(None, None, "x-2026110"), "")
+        self.assertEqual(entur.operating_date(None, None, "FLT:ServiceJourney:1-20261108-3724"), "")   # the END only
+        self.assertEqual(entur.operating_date(None, None, 20261108), "")
 
     def test_consumer_of(self):
         c = entur.consumer_of
@@ -237,6 +250,14 @@ class TestVehiclesFeed(unittest.TestCase):
         self.assertFalse(c.HasField("timestamp"))
         self.assertEqual(meta, [("RAIL", "R13"), ("RAIL", "R13"), ("RAIL", None)])
 
+    def test_flytoget_run_date(self):
+        row = {"vehicleId": "71-08", "mode": "RAIL", "line": {"lineRef": "FLT:Line:FLY1", "publicCode": "FLY1"},
+               "serviceJourney": {"id": "FLT:ServiceJourney:1-2614-3724-20261108"}, "datedServiceJourney": None,
+               "lastUpdatedEpochSecond": float(T0), "location": {"latitude": 59.9, "longitude": 10.5}}
+        fm, _ = entur.vehicles_feed({"data": {"vehicles": [row]}}, T0)
+        self.assertEqual(fm.entity[0].vehicle.trip.start_date, "20261108")
+        self.assertEqual(fm.entity[0].vehicle.vehicle.id, "71-08")
+
     def test_fix_time_from_text(self):
         v = vehicle("VYG:ServiceJourney:1672_443368-R", "VYG:Line:R13", "20261107", 60.24, 11.20, ts=None)
         v["lastUpdated"] = "2026-11-07T21:21:15.925Z"
@@ -281,6 +302,23 @@ class TestSnapshot(unittest.TestCase):
                          ["VYG:ServiceJourney:BUS-336_855501-R", UUID_BUS])
         self.assertEqual(c.unrouted, 2)                           # line X; and the tram
         self.assertEqual(vp.header.timestamp, T0)
+
+    def test_flytoget_trip_updates_kept(self):
+        tid = "FLT:ServiceJourney:1-2614-3724-20261108"
+        row = {"vehicleId": "71-08", "mode": "RAIL", "line": {"lineRef": "FLT:Line:FLY1", "publicCode": "FLY1"},
+               "serviceJourney": {"id": tid}, "datedServiceJourney": None,
+               "lastUpdatedEpochSecond": float(T0), "location": {"latitude": 59.9, "longitude": 10.5}}
+        vp_flt, tu_flt = "gql:FLT", entur.TRIP_UPDATES_URL % "FLT"
+        c, _ = self.client({vp_flt: json.dumps({"data": {"vehicles": [row]}}).encode(),
+                            tu_flt: tu_feed([(tid, "FLT:Line:FLY1", "20261108", 60),
+                                             ("FLT:ServiceJourney:1-2614-3720-20261109", "FLT:Line:FLY1",
+                                              "20261109", 0)])},
+                           [(entur.COMMUTER, "FLT")])
+        vp, tu = c.for_consumer(entur.COMMUTER, "FLT")
+        self.assertEqual(len(vp.entity), 1)
+        self.assertEqual([e.trip_update.trip.trip_id for e in tu.entity],
+                         [tid, "FLT:ServiceJourney:1-2614-3720-20261109"])
+        self.assertEqual(c.dropped_other_runs, 0)
 
     def test_public_code_routes_without_timetable(self):
         rows = [("GOA:ServiceJourney:715-LOD_68400-R", "GOA:Line:50", "20261107", 58.52, 5.80, "RAIL", "F5"),
@@ -559,6 +597,78 @@ class TestTimetable(unittest.TestCase):
         s = c.stats()
         self.assertEqual(s["timetables"], {"GOA": "v1"})
         self.assertEqual(s["timetable_routes"], {"GOA": 3})
+
+
+class TestTunnels(unittest.TestCase):
+    OSLO_S = (59.91093, 10.75328)
+    NATIONALTHEATRET = (59.91539, 10.72813)
+    SKOYEN = (59.92235, 10.67883)
+    LYSAKER = (59.91309, 10.63774)
+    SANDVIKA = (59.89290, 10.52575)
+    DRAMMEN = (59.74010, 10.20524)
+    ASKER = (59.83334, 10.43449)
+
+    def row(self, tid):
+        return next(t for t in entur.TUNNELS if t[0] == tid)
+
+    def test_table_shape(self):
+        self.assertEqual(len(entur.TUNNELS), 14)
+        self.assertEqual(len({t[0] for t in entur.TUNNELS}), 14)
+        for t in entur.TUNNELS:
+            self.assertGreater(entur.metres(t[1], t[2]), 3000.0)
+            self.assertGreater(t[3], 0)
+
+    def test_oslo_s_westbound(self):
+        t = entur.tunnel_at((59.91168, 10.75219), self.OSLO_S, self.NATIONALTHEATRET)
+        self.assertEqual(t[0], "oslotunnelen_w")
+
+    def test_come_out_is_not_sent_back(self):
+        # A train standing at Oslo S having come EAST through Oslotunnelen: east's comeback, west's way in, going east.
+        self.assertIsNone(entur.tunnel_at((59.91059, 10.75485), self.NATIONALTHEATRET, self.OSLO_S))
+
+    def test_direction_decides(self):
+        # Drammen to Oslo S is going east: the westbound Lysaker-Sandvika way in near Lysaker is not it.
+        self.assertIsNone(entur.tunnel_at((59.91486, 10.62438), self.DRAMMEN, self.OSLO_S))
+        self.assertEqual(entur.tunnel_at((59.91486, 10.62438), self.LYSAKER, self.SANDVIKA)[0], "lysaker_sandvika_w")
+
+    def test_inside_counts(self):
+        r = self.row("romeriksporten_e")
+        inside = (r[1][0] + 0.3 * (r[2][0] - r[1][0]), r[1][1] + 0.3 * (r[2][1] - r[1][1]))
+        self.assertGreater(entur.metres(inside, r[1]), entur.TUNNEL_ENTRY_M)
+        self.assertEqual(entur.tunnel_at(inside, self.OSLO_S, (59.95322, 11.04468))[0], "romeriksporten_e")
+
+    def test_far_and_missing(self):
+        self.assertIsNone(entur.tunnel_at((60.39, 5.33), (60.39, 5.33), (60.42, 5.46)))
+        self.assertIsNone(entur.tunnel_at((59.91168, 10.75219), None, self.NATIONALTHEATRET))
+        self.assertIsNone(entur.tunnel_at((59.91168, 10.75219), self.OSLO_S, None))
+
+    def test_entry_edge(self):
+        r = self.row("lieraasen_w")
+        k = entur.TUNNEL_ENTRY_M / entur.metres(r[1], r[2])
+        just_in = (r[1][0] - 0.9 * k * (r[2][0] - r[1][0]), r[1][1] - 0.9 * k * (r[2][1] - r[1][1]))
+        just_out = (r[1][0] - 1.2 * k * (r[2][0] - r[1][0]), r[1][1] - 1.2 * k * (r[2][1] - r[1][1]))
+        self.assertEqual(entur.tunnel_at(just_in, self.ASKER, self.DRAMMEN)[0], "lieraasen_w")
+        self.assertIsNone(entur.tunnel_at(just_out, self.ASKER, self.DRAMMEN))
+
+    def test_nearest_way_in(self):
+        a = ("a", (59.0, 10.0), (59.05, 10.0), 100.0, 1)
+        b = ("b", (59.003, 10.0), (59.06, 10.0), 100.0, 1)
+        self.assertEqual(entur.tunnel_at((59.0029, 10.0), (58.9, 10.0), (59.2, 10.0), (a, b))[0], "b")
+        self.assertEqual(entur.tunnel_at((59.0001, 10.0), (58.9, 10.0), (59.2, 10.0), (b, a))[0], "a")
+
+    def test_time(self):
+        r = self.row("romeriksporten_e")
+        self.assertAlmostEqual(entur.tunnel_time(r[1], r), 331.0)
+        half = ((r[1][0] + r[2][0]) / 2, (r[1][1] + r[2][1]) / 2)
+        self.assertAlmostEqual(entur.tunnel_time(half, r), 331.0 * entur.metres(half, r[2]) / entur.metres(r[1], r[2]))
+        before = (r[1][0] - 0.002, r[1][1] - 0.01)
+        self.assertAlmostEqual(entur.tunnel_time(before, r), 331.0)
+        self.assertEqual(entur.tunnel_time((1.0, 1.0), ("z", (1.0, 1.0), (1.0, 1.0), 50.0, 1)), 50.0)
+
+    def test_metres(self):
+        self.assertAlmostEqual(entur.metres((60.0, 10.0), (60.0, 10.0)), 0.0)
+        self.assertAlmostEqual(entur.metres((60.0, 10.0), (60.01, 10.0)), 1111.95, places=0)
+        self.assertAlmostEqual(entur.metres((60.0, 10.0), (60.0, 10.02)), 1111.95, places=0)
 
 
 if __name__ == "__main__":
