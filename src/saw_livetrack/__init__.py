@@ -58,6 +58,13 @@ Two submodules, deliberately separate:
                           user's own key. NOT imported here; realtime needs the
                           `gtfs` extra. Data: Transport Victoria, CC BY 4.0.
 
+  saw_livetrack.trafikverket  Sweden's trains from Trafikverket (0.2.31): one
+                          poll for every consumer with each user's own key,
+                          positions joined to their runs' announcements and
+                          routed by traffic type and brand to the intercity,
+                          commuter and transit consumers. NOT imported here;
+                          no dependencies. Data: Trafikverket, CC0.
+
   saw_livetrack.map_card  Which Live Track Map Card bundle an instance loads
                           and how its one dashboard resource row changes
                           (0.2.8). Pure; the Home Assistant calls are in
@@ -149,4 +156,4 @@ from .amtraker import (  # noqa: F401
     speed_kmh,
 )
 
-__version__ = "0.2.30"
+__version__ = "0.2.31"

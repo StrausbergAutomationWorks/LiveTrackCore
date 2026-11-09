@@ -179,6 +179,19 @@ own thread, checked by HEAD at most daily; `static_version(codespace)`,
 Share one client per Home Assistant with `reference/shared_entur.py` (0.2.27). Needs the
 `gtfs` extra.
 
+## `saw_livetrack.trafikverket` - Sweden's trains (Trafikverket)
+
+One poller for every Live Track integration that draws Swedish trains, with each user's own free key
+(`register(consumer, brand, key)`; the oldest key is used, a refused one given up on after 10 minutes, as the
+other keyed clients). Each poll reads the positions as `changeid` deltas, the announcements of each run newly
+seen whole (a positioned train's run is its advertised number and run date), and the rows of the claimed runs
+modified since the last answer: a day's announcements (about 69,000 rows) are never read whole. Each run goes to
+ONE consumer and brand by its traffic type and product: `Tåg` to `intercity` under its brand (`sj`,
+`oresundstag`, ...), `Pendeltåg` and Arlanda Express to `commuter`, `Buss` to `transit`; Vy's own trains to
+nobody (Norway's). `for_consumer(consumer, brand)` returns that brand's positioned runs with the calls of the trip
+each train is on; `stations()` the stations, read daily to `.storage/saw_trafikverket_stations.json`. Share one
+client per Home Assistant with `reference/shared_trafikverket.py` (0.2.31). No extra needed.
+
 ## `saw_livetrack.transport_vic` - Transport Victoria
 
 The GTFS Schedule is one zip of numbered folders, and a consumer takes only its own
@@ -356,6 +369,10 @@ Norwegian rail data (`saw_livetrack.entur`): contains data under the
 [Norwegian licence for Open Government data (NLOD)](https://data.norge.no/nlod/en/2.0)
 distributed by **[Entur](https://developer.entur.org)**. Nothing here redistributes the data.
 
+Swedish rail data (`saw_livetrack.trafikverket`) is from **[Trafikverket](https://data.trafikverket.se)**,
+released under [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/). Each user brings their own key;
+nothing here redistributes the data.
+
 The enforcement-aircraft list (`saw_livetrack.enforcement_list`) contains
 information from **[EnforcementAircraft](https://github.com/StrausbergAutomationWorks/EnforcementAircraft)**,
 which is made available under the
@@ -376,8 +393,8 @@ publishes no terms of use; each consumer credits it.
 ## Disclaimer
 
 Independent project. Not affiliated with, endorsed by or connected to Amtrak,
-VIA Rail Canada, Brightline, VR, Fintraffic, Renfe, Transport for NSW or
-Transport Victoria.
+VIA Rail Canada, Brightline, VR, Fintraffic, Renfe, Transport for NSW,
+Transport Victoria, Entur or Trafikverket.
 
 ## Tests
 
@@ -399,6 +416,7 @@ python -m unittest tests.test_aisstream
 python -m unittest tests.test_enforcement_vessels
 python -m unittest tests.test_zones
 python -m unittest tests.test_entur tests.test_shared_entur
+python -m unittest tests.test_trafikverket tests.test_shared_trafikverket
 ```
 
 The first four, and `test_aircraft_icons.py`, are scripts that exit non-zero on a failed check; run them
