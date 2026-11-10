@@ -290,7 +290,10 @@ class IrishRailClient:
         self.user = user
         self.timeout = timeout
         self.static_timeout = static_timeout
-        self._opener = opener or default_opener()
+        # Built at first use, in the caller's executor: the certifi context reads a file, and the shared registration
+        # constructs this client on Home Assistant's event loop (0.2.33; HA flagged a blocking call on 0.2.32).
+        self._opener_given = opener
+        self._opener_made = None
         self._clock = clock or time.time
         self.feed_ttl_s = float(feed_ttl_s)
         self.storage_dir = storage_dir
@@ -338,6 +341,14 @@ class IrishRailClient:
                 return False
             self._wanted.discard(consumer)
             return True
+
+    @property
+    def _opener(self):
+        if self._opener_given is not None:
+            return self._opener_given
+        if self._opener_made is None:
+            self._opener_made = default_opener()
+        return self._opener_made
 
     def _get(self, url, max_bytes=MAX_BYTES):
         self.fetch_count += 1

@@ -245,6 +245,20 @@ class Client(unittest.TestCase):
         op.routes[("GET", ir.HACON_URL)] = HACON
         self.assertTrue(c.poll(force=True))
 
+    def test_construction_reads_no_certificate_file(self):
+        # The shared registration builds the client on Home Assistant's event loop (0.2.33).
+        real = ir._ssl_context
+        def boom():
+            raise AssertionError("TLS context built in the constructor")
+        ir._ssl_context = boom
+        try:
+            c = ir.IrishRailClient([ir.INTERCITY])
+            self.assertIsNone(c._opener_made)
+        finally:
+            ir._ssl_context = real
+        self.assertTrue(callable(c._opener))
+        self.assertIs(c._opener, c._opener)
+
     def test_register(self):
         c = ir.IrishRailClient(opener=Opener({}), clock=Clock())
         self.assertTrue(c.register(ir.INTERCITY))
