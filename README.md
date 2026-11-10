@@ -192,6 +192,16 @@ nobody (Norway's). `for_consumer(consumer, brand)` returns that brand's position
 each train is on; `stations()` the stations, read daily to `.storage/saw_trafikverket_stations.json`. Share one
 client per Home Assistant with `reference/shared_trafikverket.py` (0.2.31). No extra needed.
 
+## `saw_livetrack.irish_rail` - Ireland's trains (Irish Rail)
+
+Irish Rail's keyless realtime API (`getHaconTrainsXML`, undocumented; the documented `getCurrentTrainsXML` when it
+fails), read once a minute for every consumer and split by the train code's prefix: A and B to `intercity`, P and D to
+`commuter`, E (DART) and `BUS` to `transit`. Positions of 0,0 are no position; times are Irish local time. Also the
+stations (weekly, `.storage/saw_irish_rail_stations.json`) and the National Transport Authority's Irish Rail GTFS
+(daily HEAD, `.storage/saw_nta_gtfs_irish_rail.zip`), each kept on disk. Share one client per Home Assistant with
+`reference/shared_irish_rail.py` (0.2.32). No extra needed (`gtfs` brings tzdata where the OS has none; without it
+Ireland's own summer-time rule is used).
+
 ## `saw_livetrack.transport_vic` - Transport Victoria
 
 The GTFS Schedule is one zip of numbered folders, and a consumer takes only its own
@@ -390,11 +400,15 @@ request while adsb.fi is failing; each consumer credits the feeds it uses.
 Vessel positions (`saw_livetrack.aisstream`) are from **[aisstream.io](https://aisstream.io)**, which
 publishes no terms of use; each consumer credits it.
 
+Irish rail data (`saw_livetrack.irish_rail`) is from **Irish Rail** (irishrail.ie), which publishes its
+realtime API "as is" with no licence stated, and the timetable from the **[National Transport Authority](https://www.transportforireland.ie/transitData/PT_Data.html)**, CC BY 4.0, provided as is.
+
 ## Disclaimer
 
 Independent project. Not affiliated with, endorsed by or connected to Amtrak,
 VIA Rail Canada, Brightline, VR, Fintraffic, Renfe, Transport for NSW,
-Transport Victoria, Entur or Trafikverket.
+Transport Victoria, Entur, Trafikverket, Irish Rail (Iarnród Éireann) or the
+National Transport Authority.
 
 ## Tests
 
@@ -417,6 +431,7 @@ python -m unittest tests.test_enforcement_vessels
 python -m unittest tests.test_zones
 python -m unittest tests.test_entur tests.test_shared_entur
 python -m unittest tests.test_trafikverket tests.test_shared_trafikverket
+python -m unittest tests.test_irish_rail tests.test_shared_irish_rail
 ```
 
 The first four, and `test_aircraft_icons.py`, are scripts that exit non-zero on a failed check; run them

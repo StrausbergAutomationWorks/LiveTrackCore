@@ -58,6 +58,10 @@ Two submodules, deliberately separate:
                           user's own key. NOT imported here; realtime needs the
                           `gtfs` extra. Data: Transport Victoria, CC BY 4.0.
 
+  saw_livetrack.irish_rail    Ireland's trains from Irish Rail's realtime API and the
+                              NTA's timetable (0.2.32): one keyless poll for every
+                              consumer, routed by train code (A/B intercity, P/D
+                              commuter, E transit)
   saw_livetrack.trafikverket  Sweden's trains from Trafikverket (0.2.31): one
                           poll for every consumer with each user's own key,
                           positions joined to their runs' announcements and
@@ -156,4 +160,4 @@ from .amtraker import (  # noqa: F401
     speed_kmh,
 )
 
-__version__ = "0.2.31"
+__version__ = "0.2.32"
