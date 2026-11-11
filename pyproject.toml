@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "saw-livetrack"
-version = "0.2.34"
-description = "Shared code for the Live Track Home Assistant integrations: source-agnostic fix tracking, GTFS and GTFS-Realtime, time zones from a coordinate, shared clients for the rail feeds of Finland, Spain, New South Wales, Victoria, Norway, Sweden and Ireland, the Live Track aircraft marker icons, the EnforcementAircraft and EnforcementVessels list readers, one shared ADS-B poll, the FAA aircraft registry, one shared aisstream.io AIS client, and an Amtraker API client"
+version = "0.2.35"
+description = "Shared code for the Live Track Home Assistant integrations: source-agnostic fix tracking, GTFS and GTFS-Realtime, time zones from a coordinate, shared clients for the rail feeds of Finland, Spain, New South Wales, Victoria, Norway, Sweden, Ireland and the Netherlands, the Live Track aircraft marker icons, the EnforcementAircraft and EnforcementVessels list readers, one shared ADS-B poll, the FAA aircraft registry, one shared aisstream.io AIS client, and an Amtraker API client"
 readme = "README.md"
 requires-python = ">=3.11"
 # The code is MIT. The aircraft icons by ADS-B Radar are under their author's own terms
@@ -13,7 +13,7 @@ requires-python = ">=3.11"
 license = "MIT AND LicenseRef-ADSB-Radar-Icons"
 license-files = ["LICENSE", "src/saw_livetrack/aircraft_icons/ATTRIBUTION.md"]
 authors = [{ name = "StrausbergAutomationWorks" }]
-keywords = ["home-assistant", "train-tracking", "geo-location", "amtrak", "via-rail", "brightline", "amtraker", "gtfs", "gtfs-realtime", "commuter-rail", "finland", "digitraffic", "spain", "renfe", "cercanias", "transport-for-nsw", "transport-victoria", "v-line", "australia", "norway", "entur", "sweden", "trafikverket", "ireland", "irish-rail", "aircraft", "ads-b", "law-enforcement", "ais", "aisstream", "ships"]
+keywords = ["home-assistant", "train-tracking", "geo-location", "amtrak", "via-rail", "brightline", "amtraker", "gtfs", "gtfs-realtime", "commuter-rail", "finland", "digitraffic", "spain", "renfe", "cercanias", "transport-for-nsw", "transport-victoria", "v-line", "australia", "norway", "entur", "sweden", "trafikverket", "ireland", "irish-rail", "netherlands", "ns", "ovapi", "aircraft", "ads-b", "law-enforcement", "ais", "aisstream", "ships"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",

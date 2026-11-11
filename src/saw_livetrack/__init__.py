@@ -65,6 +65,11 @@ Two submodules, deliberately separate:
                               timetable, positions as updates (0.2.34)
   saw_livetrack.timetable     where a train is by its calls' times alone (0.2.34):
                               call_times, place, service_base. No dependencies
+  saw_livetrack.ns            the Netherlands (0.2.35): NS's Virtual Train positions
+                              with each user's own key, one poll for every consumer,
+                              routed by type (IC and ARR intercity, SPR commuter);
+                              SpoorKaart's track; OVapi's timetable and train updates.
+                              NOT imported here; updates need the `gtfs` extra.
   saw_livetrack.trafikverket  Sweden's trains from Trafikverket (0.2.31): one
                           poll for every consumer with each user's own key,
                           positions joined to their runs' announcements and
@@ -163,4 +168,4 @@ from .amtraker import (  # noqa: F401
     speed_kmh,
 )
 
-__version__ = "0.2.34"
+__version__ = "0.2.35"

@@ -218,6 +218,21 @@ faster than 0.3 of the scheduled stretch; `place(times, now)` says whether the t
 running from it toward the next, or not out; `service_base(day, tz)` is the GTFS service day's zero. No
 dependencies.
 
+## `saw_livetrack.ns` - the Netherlands (NS, with OVapi)
+
+NS's Virtual Train positions (`/virtual-train-api/vehicle`, each user's own key from apiportal.ns.nl, header
+`Ocp-Apim-Subscription-Key`), read once for every consumer and routed by the feed's `type`: IC and the regional ARR
+trains to `intercity`, SPR to `commuter`. The feed has no fix time: `observed_at` is the poll that first saw a
+CHANGED position, flagged `observed_at_source: "first_seen"`, never re-stamped while it stands. The track is NS's
+SpoorKaart (station-to-station lines, daily, `.storage/saw_ns_spoorkaart.json`); the timetable OVapi's
+`gtfs-nl.zip` (weekly, conditional, cut to rail as it is read, `.storage/saw_ovapi_nl_rail.json.gz`), which names
+each train's trip by its number; delays OVapi's `trainUpdates.pb` every five minutes, conditional, backing off on
+429 (one server for both). A regional train's company (`arriva`, `keolis`) is NS's DVS `vervoerder`, else its
+brand's route. `for_consumer(name, operator)` gives each train with its trip, calls (expected times from the
+updates) and `path` (SpoorKaart stations); `pair_lines()` the encoded lines; `next_call(calls, now)` the next stop
+and delay. Share one client per Home Assistant with `reference/shared_ns.py` (0.2.35). The updates need the `gtfs`
+extra.
+
 ## `saw_livetrack.transport_vic` - Transport Victoria
 
 The GTFS Schedule is one zip of numbered folders, and a consumer takes only its own
@@ -419,12 +434,15 @@ publishes no terms of use; each consumer credits it.
 Irish rail data (`saw_livetrack.irish_rail`) is from **Irish Rail** (irishrail.ie), which publishes its
 realtime API "as is" with no licence stated, and the timetable from the **[National Transport Authority](https://www.transportforireland.ie/transitData/PT_Data.html)**, CC BY 4.0, provided as is.
 
+Dutch train positions and track (`saw_livetrack.ns`) are from **NS** ([apiportal.ns.nl](https://apiportal.ns.nl/)),
+read with each user's own key; the timetable and delays from **[OVapi](https://gtfs.ovapi.nl/)**, CC0.
+
 ## Disclaimer
 
 Independent project. Not affiliated with, endorsed by or connected to Amtrak,
 VIA Rail Canada, Brightline, VR, Fintraffic, Renfe, Transport for NSW,
-Transport Victoria, Entur, Trafikverket, Irish Rail (Iarnród Éireann) or the
-National Transport Authority.
+Transport Victoria, Entur, Trafikverket, Irish Rail (Iarnród Éireann), the
+National Transport Authority, NS, Arriva, Keolis or OVapi.
 
 ## Tests
 
@@ -449,9 +467,10 @@ python -m unittest tests.test_entur tests.test_shared_entur
 python -m unittest tests.test_trafikverket tests.test_shared_trafikverket
 python -m unittest tests.test_irish_rail tests.test_shared_irish_rail tests.test_irish_rail_runs
 python -m unittest tests.test_timetable
+python tests/test_ns.py
 ```
 
-The first four, and `test_aircraft_icons.py`, are scripts that exit non-zero on a failed check; run them
+The first four, `test_aircraft_icons.py` and `test_ns.py` are scripts that exit non-zero on a failed check; run them
 directly, not through `unittest discover`.
 
 ## Licence
