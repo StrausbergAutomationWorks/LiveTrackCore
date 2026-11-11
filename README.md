@@ -202,6 +202,22 @@ stations (weekly, `.storage/saw_irish_rail_stations.json`) and the National Tran
 `reference/shared_irish_rail.py` (0.2.32). No extra needed (`gtfs` brings tzdata where the OS has none; without it
 Ireland's own summer-time rule is used).
 
+Since 0.2.34 the timetable carries every train and Irish Rail's reports correct it (its positions are signalling
+points, minutes apart, and some lines are not tracked at all): `read_timetable(zip, consumer, today)` gives a
+consumer's trips, calls and service dates from the NTA's zip; `join_stations` matches the API's stations to the
+timetable's stops; `RunTracker().step(trains, now, table, stations)` returns each run drawn this poll, keyed
+`<code>-<day>`, with its last reported delay and where it is (standing at, or running from, a call). A report counts
+only when it is that run's (origin time, not a ghost, not an hour early); its last location is a floor. Direction,
+look and what is published stay with each consumer.
+
+## `saw_livetrack.timetable` - where a train is by its timetable
+
+For a railroad whose positions are scarce or absent (0.2.34). `call_times(calls)` gives each call one arrival and one
+departure: its actual, else expected, else aimed time plus the delay last known before it, refusing an arrival
+faster than 0.3 of the scheduled stretch; `place(times, now)` says whether the train is standing at a call or
+running from it toward the next, or not out; `service_base(day, tz)` is the GTFS service day's zero. No
+dependencies.
+
 ## `saw_livetrack.transport_vic` - Transport Victoria
 
 The GTFS Schedule is one zip of numbered folders, and a consumer takes only its own
@@ -431,7 +447,8 @@ python -m unittest tests.test_enforcement_vessels
 python -m unittest tests.test_zones
 python -m unittest tests.test_entur tests.test_shared_entur
 python -m unittest tests.test_trafikverket tests.test_shared_trafikverket
-python -m unittest tests.test_irish_rail tests.test_shared_irish_rail
+python -m unittest tests.test_irish_rail tests.test_shared_irish_rail tests.test_irish_rail_runs
+python -m unittest tests.test_timetable
 ```
 
 The first four, and `test_aircraft_icons.py`, are scripts that exit non-zero on a failed check; run them

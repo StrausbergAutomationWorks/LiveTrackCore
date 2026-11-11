@@ -30,7 +30,20 @@ FEED QUIRKS handled once, for every consumer:
 * ScheduledArrival/ScheduledDeparture of 01/01/1900 00:00:00 means none: None.
 * Every value is a string; times are Irish local time, DD/MM/YYYY.
 * `PublicMessage` separates its lines with a literal backslash-n.
-Ghosts (finished runs left `R` overnight) and untracked branch lines are the CONSUMER's to handle against its timetable.
+Ghosts (finished runs left `R` overnight) and untracked branch lines are handled against the timetable: the
+timetable-driven runs below (0.2.34), or the consumer's own code.
+
+TIMETABLE-DRIVEN RUNS (0.2.34; read_timetable, join_stations, RunTracker). Hoisted VERBATIM from Live Track Intercity
+Rail's `sources/irish_rail.py` (`cd1f25c`; Lee 2026-11-09: "Draw them from the timetable with their last known delay,
+marked as estimated. Push them along the track and use positions as updates.") on the second consumer, Live Track
+Commuter Rail (its SSOT 13). Every trip of the consumer's codes that the timetable runs today or yesterday (a run
+passes midnight) is drawn from RUN_PRE_DEPARTURE_S before its first departure until RUN_FINISHED_S after its last
+arrival plus its delay, by saw_livetrack.timetable's rule. A report is an UPDATE only when it is THIS run: status R or
+T, its origin time the trip's first departure within MATCH_S (or, without one, its date), and not a ghost (now within
+the run's span plus its delay plus GHOST_S); one more than EARLY_S early is not believed (Hacon lists a train at a
+station on its route about an hour early before it leaves: A104 -3,258 s, A713 -3,708 s on 2026-11-09). Its delay is
+kept for the run; status T ends the run; its last location, joined to the trip's stops, is a FLOOR. Identity
+`<code>-<day of the service date>`. Direction, look, lateness and what is published are each consumer's.
 
 POLITENESS (SAW's choice; nothing is published): one read a minute per install, FEED_TTL_S.
 TLS: certifi's bundle when importable (Home Assistant ships it), else the system's. Verification is never turned off.
@@ -38,8 +51,11 @@ TLS: certifi's bundle when importable (Home Assistant ships it), else the system
 
 from __future__ import annotations
 
+import csv
 import datetime as dt
+import io
 import json
+import math
 import os
 import re
 import ssl
@@ -47,7 +63,9 @@ import threading
 import time
 import urllib.request
 import xml.etree.ElementTree as ET
+import zipfile
 
+from . import timetable as _tt
 from ._keyed import Backoff, FeedUnavailable, KeyedError, RateLimited, fetch  # noqa: F401
 
 CONTRACT_VERSION = 1
@@ -576,3 +594,323 @@ class IrishRailClient:
                     "fetch_count": self.fetch_count, "stations": len(self._stations or ()),
                     "timetable": self._version is not None, "consumers": sorted(self._wanted),
                     "backing_off": self._clock() < self._backoff.until}
+
+
+# --- Timetable-driven runs (0.2.34): module docstring, "TIMETABLE-DRIVEN RUNS". -------------------------------------
+
+RUN_PRE_DEPARTURE_S = 300.0
+RUN_FINISHED_S = 300.0
+# A report's origin time and the trip's first departure agree to this (both are the timetable's minute).
+MATCH_S = 120.0
+# A run listed after its scheduled end plus its delay plus this is a ghost.
+GHOST_S = 1800.0
+# A report more than this EARLY is not an update (no delay, no floor).
+EARLY_S = 600.0
+# The longest delay a run is looked for under (A222 stood 205 min late on 2026-11-09).
+MAX_LATE_S = 4 * 3600.0
+RUN_FORGET_S = 36 * 3600.0
+TIMETABLE_VERSION = 1
+_WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+_NORM = re.compile(r"[^a-z]+")
+
+
+def local_day(now):
+    """The Irish local date at epoch `now`."""
+    return dt.datetime.fromtimestamp(now, _zone()).date()
+
+
+def service_base(day):
+    """The GTFS service day's zero in Irish time (saw_livetrack.timetable.service_base)."""
+    return _tt.service_base(day, _zone())
+
+
+def _gtfs_seconds(text):
+    """'25:10:00' -> 90600; None when empty or not a time."""
+    try:
+        h, m, s = (text or "").strip().split(":")
+        return int(h) * 3600 + int(m) * 60 + int(s)
+    except ValueError:
+        return None
+
+
+def _service_days(rows, names, dates):
+    """service_id -> the ISO dates among `dates` it runs on: calendar.txt's weekdays and date range, then
+    calendar_dates.txt (1 adds the date, 2 removes it). Live Track Intercity Rail's geometry.service_days, verbatim."""
+    days = {}
+    if "calendar.txt" in names:
+        for r in rows("calendar.txt"):
+            sid = (r.get("service_id") or "").strip()
+            try:
+                start = dt.datetime.strptime((r.get("start_date") or "").strip(), "%Y%m%d").date()
+                end = dt.datetime.strptime((r.get("end_date") or "").strip(), "%Y%m%d").date()
+            except ValueError:
+                continue
+            days[sid] = {d.isoformat() for d in dates if start <= d <= end
+                         and (r.get(_WEEKDAYS[d.weekday()]) or "").strip() == "1"}
+    if "calendar_dates.txt" in names:
+        wanted = {d.strftime("%Y%m%d"): d.isoformat() for d in dates}
+        for r in rows("calendar_dates.txt"):
+            iso = wanted.get((r.get("date") or "").strip())
+            if iso is None:
+                continue
+            sid = (r.get("service_id") or "").strip()
+            kind = (r.get("exception_type") or "").strip()
+            if kind == "1":
+                days.setdefault(sid, set()).add(iso)
+            elif kind == "2" and sid in days:
+                days[sid].discard(iso)
+    return days
+
+
+def read_timetable(raw, consumer, today):
+    """The NTA's Irish Rail zip -> what the timetable-driven runs need for `consumer`'s codes, JSON-ready:
+
+        stops       stop_id -> [lat, lon] (every stop, 6 decimals)
+        stop_names  stop_id -> name (the parent station's where there is one)
+        trips       trip_id -> [code, service_id, first departure s, last arrival s] (GTFS service-day seconds)
+        calls       trip_id -> [[stop_id, arrival s, departure s], ...] by stop_sequence; no row where pickup_type and
+                    drop_off_type are both 1
+        dates       service_id -> [ISO dates it runs], yesterday to six days on from `today`
+
+    A trip needs a shape_id (as Intercity's, whose trips are its shapes' trips; every Irish Rail trip has one, measured
+    2026-11-09), two calls, a first departure and a last arrival. `trips` is in stop_times.txt's order. Blocking."""
+    _check_consumer(consumer)
+    z = zipfile.ZipFile(io.BytesIO(raw))
+    names_in = z.namelist()
+
+    def rows(name):
+        with z.open(name) as f:
+            yield from csv.DictReader(io.TextIOWrapper(f, encoding="utf-8-sig"))
+
+    stops, names, parent = {}, {}, {}
+    for r in rows("stops.txt"):
+        sid = (r.get("stop_id") or "").strip()
+        if not sid:
+            continue
+        if r.get("stop_lat") and r.get("stop_lon"):
+            stops[sid] = [round(float(r["stop_lat"]), 6), round(float(r["stop_lon"]), 6)]
+        if (r.get("stop_name") or "").strip():
+            names[sid] = (r.get("stop_name") or "").strip()
+        parent[sid] = (r.get("parent_station") or "").strip()
+    names = {s: names.get(parent.get(s) or "") or n for s, n in names.items()}
+    keep = {}
+    for r in rows("trips.txt"):
+        code = (r.get("trip_short_name") or "").strip().upper()
+        tid = (r.get("trip_id") or "").strip()
+        if tid and (r.get("shape_id") or "").strip() and consumer_of(code) == consumer:
+            keep[tid] = (code, (r.get("service_id") or "").strip())
+    seq = {}
+    for r in rows("stop_times.txt"):
+        tid = (r.get("trip_id") or "").strip()
+        if tid not in keep:
+            continue
+        if (r.get("pickup_type") or "").strip() == "1" and (r.get("drop_off_type") or "").strip() == "1":
+            continue
+        seq.setdefault(tid, []).append((int(r["stop_sequence"]), (r.get("stop_id") or "").strip(),
+                                        _gtfs_seconds(r.get("arrival_time")), _gtfs_seconds(r.get("departure_time"))))
+    trips, calls = {}, {}
+    for tid, rws in seq.items():
+        rws.sort(key=lambda x: x[0])
+        if len(rws) < 2:
+            continue
+        dep0 = rws[0][3] if rws[0][3] is not None else rws[0][2]
+        arr1 = rws[-1][2] if rws[-1][2] is not None else rws[-1][3]
+        if dep0 is None or arr1 is None:
+            continue
+        code, sid = keep[tid]
+        trips[tid] = [code, sid, dep0, arr1]
+        calls[tid] = [[s, a, d] for _, s, a, d in rws]
+    window = [today + dt.timedelta(days=i) for i in range(-1, 7)]
+    days = _service_days(rows, names_in, window)
+    dates = {s: sorted(days.get(s, ())) for s in {v[1] for v in trips.values()}}
+    return {"v": TIMETABLE_VERSION, "consumer": consumer, "stops": stops, "stop_names": names, "trips": trips,
+            "calls": calls, "dates": dates}
+
+
+def _norm(name):
+    n = re.sub(r"\(.*?\)", "", (name or "").lower())
+    n = _NORM.sub("", n)
+    return n[6:] if n.startswith("dublin") and len(n) > 6 else n
+
+
+def _km(a, b, c, d):
+    p = math.pi / 180
+    h = math.sin((c - a) * p / 2) ** 2 + math.cos(a * p) * math.cos(c * p) * math.sin((d - b) * p / 2) ** 2
+    return 12742 * math.asin(math.sqrt(h))
+
+
+def join_stations(api, stops, names, max_km=1.5):
+    """API station code -> timetable stop_id: the same name (brackets, punctuation and a leading "Dublin" dropped;
+    either a prefix of the other), else the nearest stop within max_km. `api` is stations() (dicts with code, name,
+    lat, lon); `stops` and `names` read_timetable's. MEASURED 2026-11-10: 150 of 171 within 0.4 km and the same first
+    word; Belfast is 2.43 km off (still Lanyon Place), Portadown 0.66; four at 0,0."""
+    by_name = {}
+    for sid, n in names.items():
+        if sid in stops:
+            by_name.setdefault(_norm(n), []).append(sid)
+    out = {}
+    for s in api:
+        code, nm = s.get("code"), _norm(s.get("name") or "")
+        if not code:
+            continue
+        hit = by_name.get(nm) or [sid for k, v in by_name.items() if nm and len(nm) >= 4
+                                  and (k.startswith(nm) or nm.startswith(k)) for sid in v]
+        if len(set(hit)) == 1:
+            out[code] = hit[0]
+            continue
+        if s.get("lat") is None:
+            continue
+        best, bd = None, max_km
+        for sid, (la, lo) in stops.items():
+            d = _km(s["lat"], s["lon"], la, lo)
+            if d < bd:
+                best, bd = sid, d
+        if best:
+            out[code] = best
+    return out
+
+
+class Run:
+    """One run drawn this poll: `key` "<code>-<day>", the trip, its service `day` and that day's zero `base`, its
+    delay in seconds or None (never reported), `times` (saw_livetrack.timetable.call_times of its calls, each call a
+    dict with `stop` and the timetable.TIMES keys), and where it is: `state` "standing" or "running" at `index`."""
+
+    __slots__ = ("key", "trip_id", "code", "day", "base", "delay", "times", "state", "index")
+
+    def __init__(self, key, trip_id, code, day, base, delay, times, state, index):
+        self.key, self.trip_id, self.code, self.day, self.base = key, trip_id, code, day, base
+        self.delay, self.times, self.state, self.index = delay, times, state, index
+
+    def __repr__(self):
+        return "Run(%s %s %s@%d delay=%s)" % (self.key, self.trip_id, self.state, self.index, self.delay)
+
+
+class RunTracker:
+    """Per consumer entry: each run's last delay from Irish Rail, and the runs it said had terminated. Live Track
+    Intercity Rail's IrishRailRealtime (`cd1f25c`) without its Snapshot: step() returns the runs and where each is."""
+
+    def __init__(self):
+        self._delay = {}
+        self._done = {}
+        self.ghosts = 0
+        self.early = 0
+
+    @staticmethod
+    def genuine(rep, day, start, end, now):
+        """Whether a report is THIS run's (module docstring)."""
+        if rep.get("status") not in ("R", "T"):
+            return False
+        ot = rep.get("origin_time")
+        if ot is not None:
+            if abs(ot - start) > MATCH_S:
+                return False
+        elif rep.get("date") != day.isoformat():
+            return False
+        late = rep.get("delay_s") or 0
+        return start - RUN_PRE_DEPARTURE_S - MATCH_S <= now <= end + max(late, 0) + GHOST_S
+
+    def step(self, trains, now, table, stations):
+        """(runs, skipped): this consumer's trains (for_consumer's dicts) against read_timetable's `table` (`trips`,
+        `calls`, `dates`) and join_stations' `stations`, at epoch `now`. `skipped` counts what was not drawn, by
+        reason: no_timetable, duplicate, terminated, finished, no_times, not_running, ghost_or_unmatched."""
+        skipped = {}
+
+        def skip(reason):
+            skipped[reason] = skipped.get(reason, 0) + 1
+
+        trips = (table or {}).get("trips") or {}
+        dates = (table or {}).get("dates") or {}
+        calls_of = (table or {}).get("calls") or {}
+        stations = stations or {}
+        reports = {}
+        for t in trains:
+            reports.setdefault(t.get("code") or "", []).append(t)
+        if not trips:
+            skip("no_timetable")
+            return [], skipped
+        runs = []
+        today = local_day(now)
+        matched = set()
+        seen = set()
+        for day in (today - dt.timedelta(days=1), today):
+            iso, base = day.isoformat(), service_base(day)
+            for tid, trip in trips.items():
+                code, sid, first, last = trip[0], trip[1], trip[2], trip[3]
+                if iso not in dates.get(sid, ()):
+                    continue
+                start, end = base + first, base + last
+                if now < start - RUN_PRE_DEPARTURE_S or now > end + MAX_LATE_S:
+                    continue
+                key = "%s-%d" % (code, day.day)
+                if key in seen:
+                    skip("duplicate")
+                    continue
+                seen.add(key)
+                rep = next((r for r in reports.get(code, ()) if self.genuine(r, day, start, end, now)), None)
+                if rep is not None:
+                    matched.add(id(rep))
+                    if rep.get("status") == "R" and (rep.get("delay_s") or 0) < -EARLY_S:
+                        # Not believed: no delay, no floor (EARLY_S).
+                        self.early += 1
+                        rep = None
+                if rep is not None:
+                    if rep.get("status") == "T":
+                        self._done[key] = now
+                    elif rep.get("delay_s") is not None:
+                        self._delay[key] = (int(rep["delay_s"]), now)
+                if key in self._done:
+                    skip("terminated")
+                    continue
+                delay = self._delay[key][0] if key in self._delay else None
+                if now > end + max(delay or 0, 0) + RUN_FINISHED_S:
+                    skip("finished")
+                    continue
+                run = self._one(key, tid, code, day, base, delay, rep if rep and rep.get("status") == "R" else None,
+                                calls_of.get(tid) or [], stations, now, skip)
+                if run is not None:
+                    runs.append(run)
+        self.ghosts = sum(1 for rs in reports.values() for r in rs if r.get("status") == "R" and id(r) not in matched)
+        if self.ghosts:
+            skipped["ghost_or_unmatched"] = self.ghosts
+        for store in (self._delay, self._done):
+            for k in [k for k, v in store.items() if now - (v[1] if isinstance(v, tuple) else v) > RUN_FORGET_S]:
+                store.pop(k, None)
+        return runs, skipped
+
+    @staticmethod
+    def _one(key, tid, code, day, base, delay, rep, rows, stations, now, skip):
+        calls = []
+        for stop, a, d in rows:
+            aa = base + a if a is not None else None
+            ad = base + d if d is not None else None
+            c = {"stop": stop, "aimed_arrival": aa, "aimed_departure": ad}
+            if delay is not None:
+                c["expected_arrival"] = aa + delay if aa is not None else None
+                c["expected_departure"] = ad + delay if ad is not None else None
+            calls.append(c)
+        floor = None
+        if rep is not None and rep.get("last_location"):
+            sid = stations.get(rep["last_location"])
+            idx = [i for i, c in enumerate(calls) if c["stop"] == sid]
+            if idx:
+                floor = idx[0]
+                c, kind = calls[floor], rep.get("last_location_type")
+                late = delay or 0
+                if kind == "A" and (c["aimed_arrival"] or c["aimed_departure"]) is not None:
+                    c["actual_arrival"] = (c["aimed_arrival"] or c["aimed_departure"]) + late
+                elif kind == "D" and (c["aimed_departure"] or c["aimed_arrival"]) is not None:
+                    c["actual_departure"] = (c["aimed_departure"] or c["aimed_arrival"]) + late
+        times = _tt.call_times(calls)
+        if len(times) < 2:
+            skip("no_times")
+            return None
+        where = _tt.place(times, now, RUN_PRE_DEPARTURE_S, RUN_FINISHED_S)
+        if floor is not None:
+            j = next((k for k, t in enumerate(times) if t[0] is calls[floor]), None)
+            if j is not None and (where is None or where[1] < j):
+                kind = rep.get("last_location_type")
+                where = ("running", j) if kind == "D" and j < len(times) - 1 else ("standing", j)
+        if where is None:
+            skip("not_running")
+            return None
+        return Run(key, tid, code, day, base, delay, times, where[0], where[1])

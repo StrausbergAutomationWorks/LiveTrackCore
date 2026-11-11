@@ -61,7 +61,10 @@ Two submodules, deliberately separate:
   saw_livetrack.irish_rail    Ireland's trains from Irish Rail's realtime API and the
                               NTA's timetable (0.2.32): one keyless poll for every
                               consumer, routed by train code (A/B intercity, P/D
-                              commuter, E transit)
+                              commuter, E transit); every run drawn from the
+                              timetable, positions as updates (0.2.34)
+  saw_livetrack.timetable     where a train is by its calls' times alone (0.2.34):
+                              call_times, place, service_base. No dependencies
   saw_livetrack.trafikverket  Sweden's trains from Trafikverket (0.2.31): one
                           poll for every consumer with each user's own key,
                           positions joined to their runs' announcements and
@@ -160,4 +163,4 @@ from .amtraker import (  # noqa: F401
     speed_kmh,
 )
 
-__version__ = "0.2.33"
+__version__ = "0.2.34"
