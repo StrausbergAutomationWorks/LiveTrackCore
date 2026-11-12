@@ -64,6 +64,12 @@ HEX_URL = "https://opendata.adsb.fi/api/v2/icao/"
 # upper or lower case, HTTP 200 in 0.47 s; 1,000 in 0.42 s. Asked only while adsb.fi is failing (hex_round).
 HEX_URLS = {FI: HEX_URL, LOL: "https://api.adsb.lol/v2/hex/"}
 HEX_SOURCES = (FI, LOL)
+# ! adsb.lol's API KEYS (backlog 336, 0.2.36; read 2026-11-12 on adsb.lol/docs/open-data/api): the key goes in header
+# x-api-key. Keyless is 500 requests a day per IP (measured in its x-ratelimit-limit header 2026-11-12), an adhoc key
+# 1,000, a feeder key 7,200; over quota is HTTP 429 with Retry-After. Each user's own key, never shipped. A wrong or
+# expired key is refused with HTTP 401 "invalid api key" (measured 2026-11-12): the request is asked again at once
+# without it, and that key is not sent again until a consumer sets a different one. adsb.fi has no keys.
+KEY_HEADERS = {LOL: "x-api-key"}
 
 # --- cadences ---------------------------------------------------------------
 HEX_INTERVAL_S = 60
@@ -373,6 +379,10 @@ class Poll:
         self.requests: dict[str, int] = {}      # by source, since start: what the IP spent
         self.covered_answers = 0                # circles answered from another consumer's answer
         self.circle_how: dict[str, str] = {}    # consumer -> "covered" or "asked", its last circle
+        # API keys (backlog 336): source -> consumer -> key; the key a source refused (HTTP 401); requests sent with one.
+        self._keys: dict[str, dict[str, str]] = {}
+        self._refused: dict[str, str] = {}
+        self.keyed_requests: dict[str, int] = {}
 
     # --- consumers ------------------------------------------------------------
     def set_hexes(self, consumer: str, hexes: Iterable[str] | None) -> None:
@@ -400,8 +410,41 @@ class Poll:
                 out |= h
         return frozenset(out)
 
+    def set_key(self, consumer: str, key: str | None, source: str = LOL) -> None:
+        """This consumer's API key for a source that takes one (KEY_HEADERS); empty or None removes it.
+
+        ! One key is sent per source for the whole instance: the first consumer's by name that the source has not
+        refused. A user normally gives the same key to every integration; two different keys work, one at a time.
+        """
+        if source not in KEY_HEADERS:
+            raise ValueError("%s takes no API key" % source)
+        k = (key or "").strip()
+        keys = self._keys.setdefault(source, {})
+        if k:
+            keys[consumer] = k
+        else:
+            keys.pop(consumer, None)
+
+    def key_for(self, source: str) -> str | None:
+        """The key sent to this source now, or None: keyless."""
+        keys = self._keys.get(source) or {}
+        refused = self._refused.get(source)
+        for consumer in sorted(keys):
+            if keys[consumer] != refused:
+                return keys[consumer]
+        return None
+
+    def key_status(self, source: str = LOL) -> str:
+        """"none" (no consumer gave a key), "set" (one is sent) or "refused" (every key given was refused: keyless).
+        Low cardinality, for a status attribute; never the key."""
+        if not self._keys.get(source):
+            return "none"
+        return "set" if self.key_for(source) is not None else "refused"
+
     def release(self, consumer: str) -> None:
-        """A consumer unloading: its hexes and claims go."""
+        """A consumer unloading: its hexes, claims and keys go."""
+        for keys in self._keys.values():
+            keys.pop(consumer, None)
         self._hexes.pop(consumer, None)
         self._claims.pop(consumer, None)
         self._answers.pop(consumer, None)
@@ -453,11 +496,19 @@ class Poll:
             raise SourceError(f"{source} backing off, {left:.0f} s left")
         await self._pace(source)
         headers = {"User-Agent": user_agent or self.user_agent, "Accept": "application/json"}
+        key = self.key_for(source)
+        if key is not None:
+            headers[KEY_HEADERS[source]] = key
+            self.keyed_requests[source] = self.keyed_requests.get(source, 0) + 1
         self.requests[source] = self.requests.get(source, 0) + 1
+        refused = False
         try:
             async with asyncio.timeout(REQUEST_TIMEOUT_S):
                 async with session.get(url, headers=headers) as resp:
-                    if resp.status != 200:
+                    if resp.status == 401 and key is not None:
+                        # ! A REFUSED KEY IS NOT A FAILING FEED (backlog 336): no backoff, no failure episode.
+                        refused = True
+                    elif resp.status != 200:
                         if resp.status == 429:
                             header = resp.headers.get("Retry-After")
                             delay, strikes = self.backoff.refused(
@@ -469,13 +520,19 @@ class Poll:
                             self.backoff.failed(source)
                         self._note_failed(source, f"HTTP {resp.status}")
                         raise SourceError(f"{source} returned HTTP {resp.status}")
-                    payload = await resp.json(content_type=None)
+                    else:
+                        payload = await resp.json(content_type=None)
         except SourceError:
             raise
         except Exception as err:  # noqa: BLE001 - every fault is this source failing
             self.backoff.failed(source)
             self._note_failed(source, repr(err))
             raise SourceError(f"{source} unreachable: {err!r}") from err
+        if refused:
+            self._refused[source] = key
+            _LOGGER.warning("%s refused the API key (HTTP 401): it is wrong or has expired. Asking without it until "
+                            "the key is changed in the integration's options", source)
+            return await self.get_json(session, source, url, user_agent)
         self._note_answered(source)
         ended = self.backoff.answered(source)
         if ended:

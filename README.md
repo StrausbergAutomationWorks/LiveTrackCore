@@ -322,6 +322,14 @@ window like a 429's, so one hung feed does not stall every consumer, and the log
 carries one WARNING when a source starts failing and one when it has answered
 again. No Home Assistant import, no aiohttp import (0.2.13).
 
+adsb.lol takes an API key in the `x-api-key` header; without one it allows 500
+requests a day per IP address. A consumer passes its user's own key with
+`set_key(consumer, key)` and it is sent on every adsb.lol request, never to adsb.fi;
+`key_status()` says `none`, `set` or `refused`. A key adsb.lol refuses (HTTP 401, a
+wrong or expired key) is not a failing feed: the request is asked again at once
+without it, one WARNING is logged, and that key is not sent again until a different
+one is set (0.2.36).
+
 ## `saw_livetrack.ais` and `saw_livetrack.aisstream` - AIS, once per instance
 
 `saw_livetrack.ais` is the shape every AIS source yields (`Observation`, units in the field names, None

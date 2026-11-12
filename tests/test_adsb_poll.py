@@ -707,5 +707,128 @@ class TestClaims(unittest.TestCase):
         self.assertIn(ap.STORE_KEY, store)
 
 
+class HeaderSession(Session):
+    """Records every request's headers as well."""
+
+    def __init__(self, answer):
+        super().__init__(answer)
+        self.headers = []
+
+    def get(self, url, headers=None):
+        self.headers.append(dict(headers or {}))
+        return super().get(url, headers)
+
+
+class TestApiKeys(unittest.TestCase):
+    """backlog 336, 0.2.36: adsb.lol's x-api-key, each user's own."""
+
+    def test_no_key_sends_no_header(self):
+        p, _, _ = make()
+        s = HeaderSession(lambda u: Resp(200, payload()))
+        run(p.get_json(s, ap.LOL, "https://api.adsb.lol/v2/point/1/2/3"))
+        self.assertNotIn("x-api-key", s.headers[0])
+        self.assertEqual(p.key_status(), "none")
+        self.assertEqual(p.keyed_requests, {})
+
+    def test_key_goes_to_adsb_lol_only(self):
+        p, _, _ = make()
+        p.set_key("lta/1", "  k1  ")
+        s = HeaderSession(lambda u: Resp(200, payload()))
+        run(p.get_json(s, ap.LOL, "https://api.adsb.lol/v2/point/1/2/3"))
+        run(p.get_json(s, ap.FI, "https://opendata.adsb.fi/api/v3/lat/1/lon/2/dist/3"))
+        self.assertEqual(s.headers[0].get("x-api-key"), "k1")
+        self.assertNotIn("x-api-key", s.headers[1])
+        self.assertEqual(p.key_status(), "set")
+        self.assertEqual(p.keyed_requests, {ap.LOL: 1})
+
+    def test_the_circle_fallback_carries_it(self):
+        p, _, _ = make()
+        p.set_key("lta/1", "k1")
+        s = HeaderSession(lambda u: Resp(500, None) if "adsb.fi" in u else Resp(200, payload(rec("a1b2c3"))))
+        src, obs = run(p.circle(s, 41.9, -87.9, 56, 1000.0, sources=ap.FI_THEN_LOL))
+        self.assertEqual(src, ap.LOL)
+        self.assertNotIn("x-api-key", s.headers[0])
+        self.assertEqual(s.headers[-1].get("x-api-key"), "k1")
+
+    def test_a_source_without_keys_refuses_one(self):
+        p, _, _ = make()
+        with self.assertRaises(ValueError):
+            p.set_key("lta/1", "k", source=ap.FI)
+
+    def test_empty_removes_and_release_drops(self):
+        p, _, _ = make()
+        p.set_key("lta/1", "k1")
+        p.set_key("lta/1", "")
+        self.assertEqual(p.key_status(), "none")
+        p.set_key("lta/1", "k1")
+        p.release("lta/1")
+        self.assertIsNone(p.key_for(ap.LOL))
+        self.assertEqual(p.key_status(), "none")
+
+    def test_one_key_per_instance_first_consumer_by_name(self):
+        p, _, _ = make()
+        p.set_key("salt", "k2")
+        p.set_key("lta/1", "k1")
+        self.assertEqual(p.key_for(ap.LOL), "k1")
+
+    def test_a_refused_key_is_asked_again_without_it_and_not_sent_again(self):
+        p, _, _ = make()
+        p.set_key("lta/1", "bad")
+        answers = [Resp(401, None), Resp(200, payload(rec("a1b2c3"))), Resp(200, payload())]
+        s = HeaderSession(lambda u: answers.pop(0))
+        with self.assertLogs("saw_livetrack.adsb_poll", "WARNING") as logs:
+            body = run(p.get_json(s, ap.LOL, "https://api.adsb.lol/v2/point/1/2/3"))
+        self.assertEqual(body["ac"][0]["hex"], "a1b2c3")
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("refused the API key", logs.output[0])
+        self.assertNotIn("bad", logs.output[0])
+        self.assertEqual(s.headers[0].get("x-api-key"), "bad")
+        self.assertNotIn("x-api-key", s.headers[1])
+        self.assertEqual(p.key_status(), "refused")
+        self.assertIsNone(p.backoff.remaining(ap.LOL))
+        run(p.get_json(s, ap.LOL, "https://api.adsb.lol/v2/point/1/2/3"))
+        self.assertNotIn("x-api-key", s.headers[2])
+        self.assertEqual(p.keyed_requests, {ap.LOL: 1})
+
+    def test_a_new_key_is_sent_after_a_refusal(self):
+        p, _, _ = make()
+        p.set_key("lta/1", "bad")
+        answers = [Resp(401, None), Resp(200, payload()), Resp(200, payload())]
+        s = HeaderSession(lambda u: answers.pop(0))
+        with self.assertLogs("saw_livetrack.adsb_poll", "WARNING"):
+            run(p.get_json(s, ap.LOL, "https://x/"))
+        p.set_key("lta/1", "good")
+        self.assertEqual(p.key_status(), "set")
+        run(p.get_json(s, ap.LOL, "https://x/"))
+        self.assertEqual(s.headers[-1].get("x-api-key"), "good")
+
+    def test_a_second_consumers_key_is_tried_after_the_first_is_refused(self):
+        p, _, _ = make()
+        p.set_key("a", "bad")
+        p.set_key("b", "good")
+        answers = [Resp(401, None), Resp(200, payload())]
+        s = HeaderSession(lambda u: answers.pop(0))
+        with self.assertLogs("saw_livetrack.adsb_poll", "WARNING"):
+            run(p.get_json(s, ap.LOL, "https://x/"))
+        self.assertEqual([h.get("x-api-key") for h in s.headers], ["bad", "good"])
+        self.assertEqual(p.key_status(), "set")
+
+    def test_401_without_a_key_is_a_failure_as_before(self):
+        p, _, _ = make()
+        s = HeaderSession(lambda u: Resp(401, None))
+        with self.assertRaises(ap.SourceError):
+            run(p.get_json(s, ap.LOL, "https://x/"))
+        self.assertEqual(len(s.asked), 1)
+
+    def test_429_with_a_key_backs_off_as_before(self):
+        p, _, _ = make()
+        p.set_key("lta/1", "k1")
+        s = HeaderSession(lambda u: Resp(429, None, {"Retry-After": "120"}))
+        with self.assertRaises(ap.SourceError):
+            run(p.get_json(s, ap.LOL, "https://x/"))
+        self.assertIsNotNone(p.backoff.remaining(ap.LOL))
+        self.assertEqual(p.key_status(), "set")
+
+
 if __name__ == "__main__":
     unittest.main()

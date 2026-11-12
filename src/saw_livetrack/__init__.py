@@ -105,7 +105,9 @@ Two submodules, deliberately separate:
                           integrations: a union hex round a minute, shared
                           circles, one 429 backoff, claims (0.2.13); a
                           circle inside another's costs no request
-                          (0.2.14). NOT imported here; no dependencies.
+                          (0.2.14); the user's adsb.lol API key, sent as
+                          x-api-key (0.2.36). NOT imported here; no
+                          dependencies.
   saw_livetrack.ais
                           The AIS seam: Observation, the rate-of-turn
                           decode, what a transmitter is, the MMSI statics
@@ -168,4 +170,4 @@ from .amtraker import (  # noqa: F401
     speed_kmh,
 )
 
-__version__ = "0.2.35"
+__version__ = "0.2.36"
