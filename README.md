@@ -275,6 +275,18 @@ run when its terminal's forecast passes, it is cancelled, or good answers stop c
 its own timetable behind four names (`Timetable`); the look, lateness and how a stale fix is
 drawn stay with the consumer. Needs the `gtfs` extra.
 
+## `saw_livetrack.adelaide_metro` - Adelaide Metro (South Australia)
+
+New in 0.2.39. One poller for every Live Track integration that draws Adelaide Metro's vehicles: one keyless
+GTFS-Realtime feed carries trains, trams, metro and school buses, regional coaches and a ferry, and each vehicle goes
+to one consumer by its route's `route_type` in the timetable: `commuter` rail (2), `transit` tram (0), metro bus (3),
+school bus (712) and ferry (4), `bus` regional coach (701). Until the first timetable attempt ends every consumer gets
+an empty feed, so a bus is never drawn as a train. The timetable zip is kept (`static_zip()`) and downloaded again
+only when `version.txt` changes (`static_version()`, read at most hourly). 0,0, rows without a trip or a route, and a
+vehicle's older copy in one body are dropped. Shared registration: `reference/shared_adelaide_metro.py`. Credit, as
+South Australia asks: "Adelaide Metro - Department for Infrastructure and Transport, South Australia" (CC BY 4.0).
+Needs the `gtfs` extra.
+
 ## `saw_livetrack.map_card` - one map card, many integrations
 
 Every Live Track integration ships the released

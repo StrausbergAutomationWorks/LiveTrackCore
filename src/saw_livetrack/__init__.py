@@ -38,6 +38,15 @@ Two submodules, deliberately separate:
                           dependencies. Data: Fintraffic / digitraffic.fi,
                           CC BY 4.0.
 
+  saw_livetrack.adelaide_metro  Adelaide Metro's one feed of every mode (0.2.39):
+                          each vehicle to the commuter (rail), transit (tram,
+                          metro and school bus, ferry) or bus (regional coach)
+                          consumer by its route's route_type; the timetable
+                          kept, read again when version.txt changes. Keyless.
+                          NOT imported here; needs the `gtfs` extra. Data:
+                          Adelaide Metro - Department for Infrastructure and
+                          Transport, South Australia, CC BY 4.0.
+
   saw_livetrack.renfe     Spain's Renfe Cercanias and Rodalies feed (0.2.9):
                           positions and trip updates routed to the commuter,
                           intercity (Catalonia's regional lines) and bus
@@ -180,4 +189,4 @@ from .amtraker import (  # noqa: F401
     speed_kmh,
 )
 
-__version__ = "0.2.38"
+__version__ = "0.2.39"
