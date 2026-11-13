@@ -140,7 +140,7 @@ the `gtfs` extra. Share one client per Home Assistant with
 network is served from the batch it was last in for up to a minute, positions
 and trip updates both (0.2.10).
 
-## `saw_livetrack.tfnsw` - Transport for NSW's `nswtrains` feed
+## `saw_livetrack.tfnsw` - Transport for NSW's `nswtrains` and Sydney Trains feeds
 
 One poller for every Live Track integration that draws TfNSW's regional vehicles,
 each user with their own key (`Authorization: apikey <key>`; each config entry
@@ -158,6 +158,21 @@ The timetable (about 40 MB, no Range, no ETag) goes to
 given up on after 10 minutes of HTTP 401 or 403 from both feeds with no success between,
 then `AuthRefused` when none is left: one or two 401s are normal here. Share one
 client per Home Assistant with `reference/shared_tfnsw.py` (0.2.23). Needs the `gtfs` extra.
+
+Sydney Trains (0.2.37; contract and shared key unchanged): a consumer that asks, with
+`client.set_sydney_trains(consumer, True)` after `get_shared_tfnsw_client()` (the reference copy is
+unchanged), also gets Sydney Trains' v2 positions and trip updates, and the new `transit` consumer
+always does. `commuter` gets the Intercity lines (CCN, BMT, SCO, SHL, HUN) and `intercity`
+the CTY trains, each merged with nswtrains' into ONE entity per run and service day: the fresher fix
+(nswtrains' within 30 s), never older than the last one handed out, and nswtrains' trip and updates
+whenever nswtrains has that run. `transit` gets the suburban lines as they are. Sydney Trains' runs
+carry `trip.start_date`, set from the trip id's calendar service; their signalling-location `stop_id`
+and bearing are cleared; a run not yet departed (by the time opening `vehicle.label`) is handed out
+only on a fix at most 300 s old. A consumer that does not ask gets the nswtrains-only feed exactly as
+before. The Sydney Trains timetable (about 11 MB) goes to `.storage/saw_tfnsw_sydneytrains.zip`:
+`static_version("sydneytrains")`, `static_path("sydneytrains")`; `timetable_of(trip_id)` names the
+timetable a trip id belongs to. `gtfs.realtime.sequence_by_stop(trip_update, rows)` fills Sydney
+Trains' zero stop sequences from a consumer's own timetable rows.
 
 ## `saw_livetrack.entur` - Norway's trains (Entur)
 
@@ -463,6 +478,7 @@ python tests/test_map_card.py
 python tests/test_shared_map_card.py
 python tests/test_renfe.py
 python tests/test_tfnsw.py
+python tests/test_tfnsw_sydneytrains.py
 python tests/test_transport_vic.py
 python tests/test_aircraft_icons.py
 python -m unittest discover -s tests -p "test_gtfs_*.py"
@@ -478,7 +494,7 @@ python -m unittest tests.test_timetable
 python tests/test_ns.py
 ```
 
-The first four, `test_aircraft_icons.py` and `test_ns.py` are scripts that exit non-zero on a failed check; run them
+The first four, `test_tfnsw_sydneytrains.py`, `test_aircraft_icons.py` and `test_ns.py` are scripts that exit non-zero on a failed check; run them
 directly, not through `unittest discover`.
 
 ## Licence

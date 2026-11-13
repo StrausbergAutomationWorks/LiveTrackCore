@@ -207,7 +207,8 @@ check("static 204", tf.consumer_of("4T.T.NT", {"4T.T.NT": "204"}) == tf.BUS)
 check("static 205", tf.consumer_of("4T.T.NT", {"4T.T.NT": "205"}) == tf.BUS)
 check("static other type: nobody", tf.consumer_of("4T.T.NT", {"4T.T.NT": "3"}) is None)
 check("route not in static falls to the prefix", tf.consumer_of("4T.C.818", {"4T.T.NT": "106"}) == tf.BUS)
-check("constants", (tf.SHARED_KEY, tf.CONSUMERS) == ("saw_tfnsw_v1", ("intercity", "commuter", "bus")))
+# 0.2.37 (Sydney Trains): the `transit` consumer; the contract stays 1 (Lee 2026-11-12, against the design's 2).
+check("constants", (tf.SHARED_KEY, tf.CONSUMERS) == ("saw_tfnsw_v1", ("intercity", "commuter", "bus", "transit")))
 check("attribution, D4", tf.ATTRIBUTION == "Data: Transport for NSW (opendata.transport.nsw.gov.au), CC BY 4.0")
 check("urls", (tf.POSITIONS_URL, tf.TRIP_UPDATES_URL, tf.STATIC_URL) == (
     "https://api.transport.nsw.gov.au/v1/gtfs/vehiclepos/nswtrains",

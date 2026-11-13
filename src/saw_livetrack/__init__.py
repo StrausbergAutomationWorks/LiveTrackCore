@@ -49,6 +49,8 @@ Two submodules, deliberately separate:
                           vehicle to the intercity, commuter or bus consumer, one
                           update per position's run, the misleading fields
                           cleared, the timetable on disk. Each user's own key.
+                          Sydney Trains (0.2.37) for a consumer that asks, and
+                          for transit: one entity per run across both feeds.
                           NOT imported here; needs the `gtfs` extra. Data:
                           Transport for NSW, CC BY 4.0.
 
@@ -170,4 +172,4 @@ from .amtraker import (  # noqa: F401
     speed_kmh,
 )
 
-__version__ = "0.2.36"
+__version__ = "0.2.37"

@@ -102,6 +102,43 @@ def drop_skipped(feed) -> int:
     return n
 
 
+def sequence_by_stop(trip_update, rows) -> int:
+    """Fill a TripUpdate's stop_sequence from the consumer's own timetable rows, by stop id, in place; how many placed.
+
+    rows: (stop_sequence, stop_id) of this trip in timetable order (the library holds no timetable). Each stop update,
+    in feed order, takes the first row AFTER the last row taken whose stop_id is its own, so a stop visited twice gets
+    each visit in turn. A stop update the rows cannot place is REMOVED: left with sequence 0 or unset, schedule.next_stops
+    (which sorts by sequence) would put it first, ahead of the train. Then next_stops, stop_delays, update_delays and
+    next_by_timetable work unchanged.
+
+    Sydney Trains (backlog 319, DESIGN_319_sydneytrains_20261112.md #5 and section 7): stop_sequence 0 on 1,021 of 1,021
+    Intercity stop updates measured, stop_id set and in its stops.txt. A consumer applies this to Sydney Trains' trips
+    only, with the rows of the timetable saw_livetrack.tfnsw.timetable_of names.
+    """
+    table = [(int(seq), (sid or "").strip()) for seq, sid in rows]
+    updates = trip_update.stop_time_update
+    keep, i, placed = [], 0, 0
+    for stu in updates:
+        sid = stu.stop_id.strip() if stu.HasField("stop_id") else ""
+        found = None
+        if sid:
+            for j in range(i, len(table)):
+                if table[j][1] == sid:
+                    found = j
+                    break
+        if found is None:
+            keep.append(False)
+            continue
+        stu.stop_sequence = table[found][0]
+        i = found + 1
+        placed += 1
+        keep.append(True)
+    for k in range(len(updates) - 1, -1, -1):
+        if not keep[k]:
+            del updates[k]
+    return placed
+
+
 def decode(raw: bytes):
     """Bytes -> a GTFS-RT FeedMessage, or None for a payload that will not
     parse, whatever its shape. Raises ImportError when the `gtfs` extra is
