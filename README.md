@@ -251,14 +251,29 @@ extra.
 ## `saw_livetrack.transport_vic` - Transport Victoria
 
 The GTFS Schedule is one zip of numbered folders, and a consumer takes only its own
-(`intercity` folder 1, `bus` folder 5) by HTTP Range. The address is read from the
+(`intercity` and `commuter` folder 1, `bus` folder 5) by HTTP Range. The address is read from the
 portal's CKAN API each time, because it changes. Checked daily, fetched when the ETag
 changes, the ETag held on every response and the CRC at the end; a 200 to a Range
 request is abandoned unread. `static_path(consumer)` is the folder as a zip at
-`.storage/saw_transport_vic_<folder>.zip`; no key needed. Realtime, V/Line's only so far:
-`for_consumer("intercity")`, as published, with the user's own key (`KeyId`). No
-V/Line rule lives here. Share one client per Home Assistant with
-`reference/shared_transport_vic.py` (0.2.23). Realtime needs the `gtfs` extra.
+`.storage/saw_transport_vic_<folder>.zip`; no key needed. Realtime, V/Line's only so far,
+with the user's own key (`KeyId`): fetched once for both its consumers, each handed only its
+own routes (0.2.38): `for_consumer("commuter")` GEL, BAT, TRN, BGO and SER (V/Line's own
+commuter class), `for_consumer("intercity")` every other route. `feed_newest(consumer)` is the
+whole feed's newest fix, for the frozen-feed rule. Share one client per Home Assistant with
+`reference/shared_transport_vic.py` (0.2.23, unchanged). Realtime needs the `gtfs` extra.
+
+## `saw_livetrack.vline` - V/Line's feed rules
+
+Moved from Live Track Intercity Rail in 0.2.38, for every consumer of the feed. V/Line's
+positions run on the timetable, not the train: a trip leaves the feed about a minute after its
+scheduled arrival wherever the train is, and every fix freezes at about 23:58. `VLineRuns`
+keeps each run on its last accepted fix when its row goes (`Report.held`), reads a frozen feed
+from the whole feed's newest fix, refuses flips over 70 m/s (confirmed after 30 minutes) and
+older fixes, finds the one timetable trip for a live trip id the timetable lacks, and ends a
+run when its terminal's forecast passes, it is cancelled, or good answers stop carrying it.
+`next_stop` is the timetable plus the update's delay, never the origin. A consumer hands it
+its own timetable behind four names (`Timetable`); the look, lateness and how a stale fix is
+drawn stay with the consumer. Needs the `gtfs` extra.
 
 ## `saw_livetrack.map_card` - one map card, many integrations
 
@@ -480,6 +495,7 @@ python tests/test_renfe.py
 python tests/test_tfnsw.py
 python tests/test_tfnsw_sydneytrains.py
 python tests/test_transport_vic.py
+python -m unittest tests.test_vline
 python tests/test_aircraft_icons.py
 python -m unittest discover -s tests -p "test_gtfs_*.py"
 python -m unittest discover -s tests -p "test_enforcement_list.py"

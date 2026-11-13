@@ -21,9 +21,25 @@ THE GTFS SCHEDULE, no key: one zip of numbered folders, each a google_transit.zi
   is contiguous and ascending, so a consumer can distill it one shape at a time.
 
 THE REALTIME FEEDS, a key per user, header KeyId. Only V/Line's are measured, so only V/Line's are here; a mode is a line
-in FEEDS once it has been. No V/Line rule is here either: its positions run on the timetable and stop at midnight
-(30_Integrations/Live_Track_Intercity_Rail/20_Research/_shared/australia/AU_CAPTURE1_ANALYSIS_20261101.md section 4), and
-that is its one consumer's to handle.
+in FEEDS once it has been. V/Line's rules (its positions run on the timetable and stop at midnight,
+30_Integrations/Live_Track_Intercity_Rail/20_Research/_shared/australia/AU_CAPTURE1_ANALYSIS_20261101.md section 4) are
+saw_livetrack.vline's since 0.2.38, for every consumer of the feed.
+
+V/LINE'S FEED HAS TWO CONSUMERS since 0.2.38 (backlog 337; Lee 2026-11-13 01:45 CST, "Build and deploy"): its commuter
+routes to Live Track Commuter Rail, the long-distance routes to Live Track Intercity Rail, as Sydney's went. One fetch, one
+folder (1), each consumer handed only its own routes (06_MAP_CONTRACT.md D1):
+
+    commuter    GEL, BAT, TRN, BGO, SER     Geelong, Ballarat, Traralgon (Gippsland), Bendigo, Seymour
+    intercity   every other route           SNH, ART, WBL, ECH, BDE, ABY, MBY, SWL, vPK, and any route added later
+
+The cut is V/Line's own: its performance page (vline.com.au/About-V-Line/Performance, read 2026-11-13) measures exactly
+these five as "short distance (commuter)" and the rest as long distance (Commuter Rail's research note
+AU_VLINE_COMMUTER_20261113.md section 6). A route's code is read from route_id (`aus:vic:vic-01-GEL:`), else from the trip
+id (`01-GEL--3-T0-8751`). MEASURED 2026-11-13 08:06Z, one read (bin\vl337_feed_probe.txt): route_id on 36 of 36
+positions and 57 of 57 trip updates, its code equal to the trip id's on all. Before 0.2.38 the intercity consumer was
+handed every V/Line route: an integration released before it, installed beside 0.2.38, now gets the long routes only.
+The contract stays 1 (as tfnsw's in 0.2.37: every copy of reference/shared_transport_vic.py reads CONTRACT_VERSION from
+the installed package, so a bump could not tell old copies from new); the reference is unchanged.
 
 Behind Cloudflare: Python's default User-Agent is refused with HTTP 403, body `error code: 1010`, which looks like a bad
 key (05_SHARED_LESSONS.md C13). DEFAULT_USER answered 200 on 2026-11-02. HTTP 500 "(still) no cached message" came 217
@@ -58,12 +74,15 @@ TIME_ZONE = "Australia/Melbourne"
 
 INTERCITY = "intercity"
 BUS = "bus"
-CONSUMERS = (INTERCITY, BUS)
+COMMUTER = "commuter"
+CONSUMERS = (INTERCITY, BUS, COMMUTER)
 
-# The outer zip's folder for each consumer: V/Line trains; V/Line coaches.
-FOLDERS = {INTERCITY: "1", BUS: "5"}
+# The outer zip's folder for each consumer: V/Line trains (both halves of one folder); V/Line coaches.
+FOLDERS = {INTERCITY: "1", BUS: "5", COMMUTER: "1"}
 # The realtime path for each consumer. V/Line's coaches' positions are not measured: none yet.
-FEEDS = {INTERCITY: "vline"}
+FEEDS = {INTERCITY: "vline", COMMUTER: "vline"}
+# V/Line's routes that go to the commuter consumer (module docstring); every other V/Line route is intercity's.
+VLINE_COMMUTER_ROUTES = frozenset({"GEL", "BAT", "TRN", "BGO", "SER"})
 
 # A 30 s poll (Lee 2026-11-01, decision 12) always reads fresh. Documented limit 20-27 calls a minute, cache 30 s.
 FEED_TTL_S = 25.0
@@ -79,6 +98,59 @@ _EOCD = b"PK\x05\x06"
 def _check_consumer(consumer):
     if consumer not in CONSUMERS:
         raise ValueError("unknown consumer %r" % (consumer,))
+
+
+def route_code(route_id):
+    """'aus:vic:vic-01-GEL:' -> 'GEL'."""
+    return route_id.strip().rstrip(":").rsplit("-", 1)[-1]
+
+
+def trip_code(trip_id):
+    """'01-GEL--3-T0-8751' -> 'GEL'; None without the '--' or a code."""
+    head, sep, _ = (trip_id or "").partition("--")
+    code = head.split("-", 1)[1] if sep and "-" in head else ""
+    return code or None
+
+
+def vline_consumer_of(route_id, trip_id=None):
+    """COMMUTER or INTERCITY for a V/Line trip: by its route's code (route_id, else the trip id). Every route not on
+    the commuter list, and a trip naming neither, is intercity's (module docstring)."""
+    rid = route_id.strip() if isinstance(route_id, str) else ""
+    code = route_code(rid) if rid else trip_code(trip_id if isinstance(trip_id, str) else "")
+    return COMMUTER if code in VLINE_COMMUTER_ROUTES else INTERCITY
+
+
+def newest_fix(positions):
+    """(the newest dated fix in a positions feed as an epoch or None, how many dated fixes it holds): what
+    saw_livetrack.vline's frozen-feed rule reads from the WHOLE feed."""
+    from .gtfs.realtime import position_of, vehicle_time
+    stamps = []
+    for ent in getattr(positions, "entity", ()) or ():
+        if ent.HasField("vehicle") and position_of(ent.vehicle) is not None:
+            when = vehicle_time(ent.vehicle)
+            if when is not None:
+                stamps.append(when.timestamp())
+    return (max(stamps) if stamps else None), len(stamps)
+
+
+def share(feed, consumer, path):
+    """`feed` (positions or trip updates) cut to `consumer`'s entities: a new FeedMessage with the same header. Only
+    V/Line's path is split; anything else is returned as it is."""
+    if feed is None or path != "vline":
+        return feed
+    out = type(feed)()
+    out.header.CopyFrom(feed.header)
+    for ent in feed.entity:
+        if ent.HasField("vehicle"):
+            trip = ent.vehicle.trip
+        elif ent.HasField("trip_update"):
+            trip = ent.trip_update.trip
+        else:
+            trip = None
+        owner = vline_consumer_of(trip.route_id, trip.trip_id) if trip is not None else INTERCITY
+        if owner == consumer:
+            out.entity.add().CopyFrom(ent)
+    return out
 
 
 def _decode(raw, url):
@@ -163,7 +235,9 @@ class TransportVicClient:
         self._ring = KeyRing(self._clock)
         self._backoff = Backoff(self._clock)
         self._wanted = set()
-        self._feeds = {}             # realtime path -> (fetched at, positions, trip updates)
+        self._feeds = {}             # realtime path -> (fetched at, positions, trip updates), the WHOLE feeds
+        self._newest = {}            # realtime path -> newest_fix() of the whole positions
+        self._shares = {}            # (path, consumer) -> (the _feeds tuple it was cut from, positions, trip updates)
         self._versions = {}          # folder -> etag
         self._static_at = None
         self._static_retry = 0.0
@@ -424,7 +498,7 @@ class TransportVicClient:
             now = self._clock()
             held = self._feeds.get(path)
             if not force and held is not None and now - held[0] < self.feed_ttl_s:
-                return held[1], held[2]
+                return self._share(path, consumer, held)
             base = REALTIME_BASE + path + "/"
             url = base + "vehicle-positions"
             self._backoff.check(url)
@@ -449,8 +523,28 @@ class TransportVicClient:
                 tu = None
             except KeyedError:
                 tu = None
-            self._feeds[path] = (now, vp, tu)
-            return vp, tu
+            held = self._feeds[path] = (now, vp, tu)
+            newest = newest_fix(vp)
+            with self._state:
+                self._newest[path] = newest
+            return self._share(path, consumer, held)
+
+    def _share(self, path, consumer, held):
+        """`consumer`'s share of one fetch (`held`, a _feeds tuple), cut once. Under the fetch lock."""
+        got = self._shares.get((path, consumer))
+        if got is not None and got[0] is held:
+            return got[1], got[2]
+        vp, tu = share(held[1], consumer, path), share(held[2], consumer, path)
+        self._shares[(path, consumer)] = (held, vp, tu)
+        return vp, tu
+
+    def feed_newest(self, consumer):
+        """(newest dated fix epoch or None, dated fixes) of the WHOLE positions feed `consumer` was last handed a share
+        of, for saw_livetrack.vline.feed_frozen; None before a fetch. Never waits for a fetch in progress."""
+        _check_consumer(consumer)
+        path = FEEDS.get(consumer)
+        with self._state:
+            return self._newest.get(path)
 
     def _positions_refused(self, url, hdr, key):
         """Counts against the key only if the other feed refuses it too (design section 2)."""

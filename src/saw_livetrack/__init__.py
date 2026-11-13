@@ -59,6 +59,14 @@ Two submodules, deliberately separate:
                           the portal each time, and V/Line's realtime with each
                           user's own key. NOT imported here; realtime needs the
                           `gtfs` extra. Data: Transport Victoria, CC BY 4.0.
+                          V/Line's feed split by route (0.2.38): GEL, BAT,
+                          TRN, BGO, SER to the commuter consumer, the rest
+                          to intercity; one fetch.
+  saw_livetrack.vline     V/Line's feed rules for every consumer (0.2.38,
+                          moved from Live Track Intercity Rail): runs kept
+                          on their last fix when their row goes, the frozen
+                          feed, flips, the trip-id fallback, the next stop.
+                          NOT imported here; needs the `gtfs` extra.
 
   saw_livetrack.irish_rail    Ireland's trains from Irish Rail's realtime API and the
                               NTA's timetable (0.2.32): one keyless poll for every
@@ -172,4 +180,4 @@ from .amtraker import (  # noqa: F401
     speed_kmh,
 )
 
-__version__ = "0.2.37"
+__version__ = "0.2.38"

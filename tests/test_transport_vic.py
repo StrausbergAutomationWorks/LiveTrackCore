@@ -202,9 +202,11 @@ def rt_bodies():
 vp, tu = rt_bodies()
 
 # --- constants -------------------------------------------------------------------
-check("constants", (tv.SHARED_KEY, tv.CONSUMERS) == ("saw_transport_vic_v1", ("intercity", "bus")))
-check("folders held across two publications", tv.FOLDERS == {"intercity": "1", "bus": "5"})
-check("realtime: V/Line's only", tv.FEEDS == {"intercity": "vline"})
+check("constants", (tv.SHARED_KEY, tv.CONSUMERS) == ("saw_transport_vic_v1", ("intercity", "bus", "commuter")))
+check("contract still 1 (0.2.38)", tv.CONTRACT_VERSION == 1)
+check("folders held across two publications; commuter shares V/Line's", tv.FOLDERS == {"intercity": "1", "bus": "5", "commuter": "1"})
+check("realtime: V/Line's only, for both its consumers", tv.FEEDS == {"intercity": "vline", "commuter": "vline"})
+check("V/Line's commuter routes: its own short-distance class", tv.VLINE_COMMUTER_ROUTES == frozenset({"GEL", "BAT", "TRN", "BGO", "SER"}))
 check("the portal, never the catalogue", tv.CKAN_URL == "https://opendata.transport.vic.gov.au/api/3/action/package_show?id=3f4e292e-7f8a-4ffe-831f-1953be0fe448")
 check("realtime url", VP_URL == "https://api.opendata.transport.vic.gov.au/opendata/public-transport/gtfs/realtime/v1/vline/vehicle-positions")
 check("ttl under the 30 s poll", tv.FEED_TTL_S == 25.0)
@@ -558,6 +560,85 @@ check("no key in a refusal", KEY_A not in msg and "401" in msg)
 msg = str(caught(lambda: client(Net(vp=OSError("boom " + KEY_A), tu=tu)).for_consumer(tv.INTERCITY)))
 check("no key from a transport error's text", KEY_A not in msg)
 check("no key in stats", KEY_A not in json.dumps(client(Net()).stats(), default=str))
+
+# --- V/Line's two consumers (0.2.38, backlog 337) ------------------------------------------------
+check("route_code", tv.route_code("aus:vic:vic-01-GEL:") == "GEL" and tv.route_code("aus:vic:vic-01-vPK:") == "vPK")
+check("trip_code", tv.trip_code("01-GEL--3-T0-8751") == "GEL" and tv.trip_code("8821") is None and tv.trip_code("") is None
+      and tv.trip_code(None) is None and tv.trip_code("--3") is None)
+for rid, tid, want in (("aus:vic:vic-01-GEL:", "x", tv.COMMUTER), ("aus:vic:vic-01-BAT:", "", tv.COMMUTER),
+                       ("aus:vic:vic-01-TRN:", "", tv.COMMUTER), ("aus:vic:vic-01-BGO:", "", tv.COMMUTER),
+                       ("aus:vic:vic-01-SER:", "", tv.COMMUTER), ("aus:vic:vic-01-SNH:", "", tv.INTERCITY),
+                       ("aus:vic:vic-01-ABY:", "01-GEL--3-T0-8751", tv.INTERCITY), ("aus:vic:vic-01-vPK:", "", tv.INTERCITY),
+                       ("", "01-BGO--3-T0-8037", tv.COMMUTER), ("", "01-SWL--3-T0-8084", tv.INTERCITY),
+                       ("  ", "01-SER--3-T0-8335", tv.COMMUTER), ("", "8821", tv.INTERCITY), (None, None, tv.INTERCITY),
+                       ("aus:vic:vic-01-NEW:", "", tv.INTERCITY)):
+    check("vline_consumer_of(%r, %r)" % (rid, tid), tv.vline_consumer_of(rid, tid) == want)
+
+
+def split_bodies():
+    vp, tu = pb.FeedMessage(), pb.FeedMessage()
+    for f in (vp, tu):
+        f.header.gtfs_realtime_version = "2.0"
+        f.header.timestamp = 1_800_000_000
+    rows = (("01-GEL--3-T0-8751", "aus:vic:vic-01-GEL:", 1_799_999_950), ("01-ABY--3-T0-8605", "aus:vic:vic-01-ABY:", 1_799_999_900),
+            ("01-BAT--3-T0-8101", "", 1_799_999_990), ("8821", "", None), ("01-SNH--3-T0-8383", "aus:vic:vic-01-SNH:", 1_799_999_000))
+    for i, (tid, rid, ts) in enumerate(rows):
+        e = vp.entity.add()
+        e.id = "v%d" % i
+        e.vehicle.trip.trip_id = tid
+        e.vehicle.trip.route_id = rid
+        e.vehicle.position.latitude = -37.8
+        e.vehicle.position.longitude = 144.9
+        if ts is not None:
+            e.vehicle.timestamp = ts
+        u = tu.entity.add()
+        u.id = "u%d" % i
+        u.trip_update.trip.trip_id = tid
+        u.trip_update.trip.route_id = rid
+    a = vp.entity.add()
+    a.id = "alert"
+    a.alert.header_text.translation.add().text = "x"
+    return vp.SerializeToString(), tu.SerializeToString()
+
+
+svp, stu = split_bodies()
+net, clk = Net(vp=svp, tu=stu), Clock()
+c = client(net, {tv.INTERCITY: KEY_A, tv.COMMUTER: KEY_B}, clock=clk)
+check("feed_newest: None before a fetch", c.feed_newest(tv.COMMUTER) is None and c.feed_newest(tv.INTERCITY) is None)
+cp, cu = c.for_consumer(tv.COMMUTER)
+ip, iu = c.for_consumer(tv.INTERCITY)
+ids = lambda f: [e.vehicle.trip.trip_id if e.HasField("vehicle") else e.trip_update.trip.trip_id for e in f.entity]
+check("commuter: GEL and BAT (by its trip id), positions", ids(cp) == ["01-GEL--3-T0-8751", "01-BAT--3-T0-8101"])
+check("commuter: the same, trip updates", ids(cu) == ["01-GEL--3-T0-8751", "01-BAT--3-T0-8101"])
+check("intercity: ABY, the unnamed trip, SNH and the alert, positions",
+      [e.id for e in ip.entity] == ["v1", "v3", "v4", "alert"])
+check("intercity: trip updates", ids(iu) == ["01-ABY--3-T0-8605", "8821", "01-SNH--3-T0-8383"])
+check("no entity in both", not set(e.id for e in cp.entity) & set(e.id for e in ip.entity))
+check("every entity in one", len(cp.entity) + len(ip.entity) == 6 and len(cu.entity) + len(iu.entity) == 5)
+check("one fetch for both consumers", net.count(VP_URL) == 1 and net.count(TU_URL) == 1)
+check("the header copied", cp.header.timestamp == 1_800_000_000 and ip.header.gtfs_realtime_version == "2.0")
+check("entities copied whole", abs(cp.entity[0].vehicle.position.latitude + 37.8) < 1e-5
+      and cp.entity[0].vehicle.timestamp == 1_799_999_950 and cp.entity[0].id == "v0")
+check("inside the ttl: each consumer's share the same objects", c.for_consumer(tv.COMMUTER)[0] is cp
+      and c.for_consumer(tv.INTERCITY)[1] is iu and net.count(VP_URL) == 1)
+check("feed_newest: the WHOLE feed's newest and its dated fixes, for either consumer",
+      c.feed_newest(tv.COMMUTER) == (1_799_999_990.0, 4) == c.feed_newest(tv.INTERCITY))
+check("feed_newest: a consumer with no realtime", c.feed_newest(tv.BUS) is None)
+check("feed_newest: unknown consumer", raises(ValueError, lambda: c.feed_newest("tram")))
+clk.t += 30
+cp2, _ = c.for_consumer(tv.COMMUTER)
+check("past the ttl: fetched again, a new share", net.count(VP_URL) == 2 and cp2 is not cp and ids(cp2) == ids(cp))
+check("the other consumer's share follows the new fetch", c.for_consumer(tv.INTERCITY)[0] is not ip and net.count(VP_URL) == 2)
+check("share: another path untouched", tv.share(ip, tv.COMMUTER, "metro") is ip and tv.share(None, tv.COMMUTER, "vline") is None)
+check("a commuter-only client works", [e.id for e in client(Net(vp=svp, tu=stu), {tv.COMMUTER: KEY_A}).for_consumer(tv.COMMUTER)[0].entity] == ["v0", "v2"])
+check("commuter and intercity: one folder", tv.FOLDERS[tv.COMMUTER] == tv.FOLDERS[tv.INTERCITY])
+with tempfile.TemporaryDirectory() as tmp:
+    net = Net()
+    c = client(net, {tv.INTERCITY: None, tv.COMMUTER: None}, storage_dir=tmp)
+    check("both consumers: one folder fetched", c.refresh_static() is True and c.stats()["folders"] == ["1"]
+          and c.static_path(tv.COMMUTER) == c.static_path(tv.INTERCITY) == os.path.join(tmp, "saw_transport_vic_1.zip"))
+    check("commuter's version is the folder's", c.static_version(tv.COMMUTER) == '"e1"')
+
 
 # register never waits for a fetch
 gate, entered = threading.Event(), threading.Event()
