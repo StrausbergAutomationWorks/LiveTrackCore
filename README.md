@@ -287,6 +287,20 @@ vehicle's older copy in one body are dropped. Shared registration: `reference/sh
 South Australia asks: "Adelaide Metro - Department for Infrastructure and Transport, South Australia" (CC BY 4.0).
 Needs the `gtfs` extra.
 
+## `saw_livetrack.transperth` - Western Australia, from the timetable
+
+New in 0.2.40. Perth publishes no realtime, so every vehicle is drawn from the Public Transport Authority's static GTFS
+(one zip for Transperth's trains, buses and ferry, Transwa and the regional town buses). One copy of the 27 MB zip on
+disk per Home Assistant (`.storage/saw_transperth_gtfs.zip`), checked daily with a HEAD and downloaded again only when
+its Last-Modified changes (`static_path()`, `static_version()`). `consumer_of(agency_id, agency_name, route_type)`:
+`commuter` Transperth's trains, `intercity` Transwa's trains, `transit` Transperth's buses and ferry, `bus` the rest.
+`cut(raw, consumer)` keeps one consumer's routes with every header and cell stripped (the PTA's `stops.txt` header has
+a space after each comma); `read_timetable()` gives the stops, routes, trips, calls and service dates;
+`scheduled_runs(table, now)` places every run by its aimed times (`saw_livetrack.timetable`), Western Australian time
+(UTC+8, no daylight saving). Shared registration: `reference/shared_transperth.py`. The licence asks whoever passes the
+data on to state that it is "available free of charge from www.transperth.wa.gov.au" (`ATTRIBUTION`); no PTA trademark
+is used with the data. Stdlib only.
+
 ## `saw_livetrack.map_card` - one map card, many integrations
 
 Every Live Track integration ships the released

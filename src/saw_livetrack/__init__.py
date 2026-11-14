@@ -47,6 +47,15 @@ Two submodules, deliberately separate:
                           Adelaide Metro - Department for Infrastructure and
                           Transport, South Australia, CC BY 4.0.
 
+  saw_livetrack.transperth  The PTA of Western Australia's timetable (0.2.40):
+                          Perth publishes no realtime, so every vehicle is
+                          drawn from it (scheduled_runs); one copy of the
+                          zip on disk per Home Assistant, checked daily;
+                          commuter (Transperth trains), intercity (Transwa),
+                          transit, bus consumers. Keyless, stdlib only. NOT
+                          imported here. Data: available free of charge from
+                          www.transperth.wa.gov.au (PTA licence).
+
   saw_livetrack.renfe     Spain's Renfe Cercanias and Rodalies feed (0.2.9):
                           positions and trip updates routed to the commuter,
                           intercity (Catalonia's regional lines) and bus
@@ -189,4 +198,4 @@ from .amtraker import (  # noqa: F401
     speed_kmh,
 )
 
-__version__ = "0.2.39"
+__version__ = "0.2.40"
