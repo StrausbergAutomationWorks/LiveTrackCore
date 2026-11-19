@@ -13,6 +13,7 @@ Every rule enforced here was MEASURED. See 05_SHARED_LESSONS.md section B8.
 from __future__ import annotations
 
 import datetime as _dt
+import gzip
 import json
 import math
 import urllib.error
@@ -260,11 +261,16 @@ def heading_octant(train):
 
 def _request(path, user_agent, timeout, opener=None):
     url = "%s/%s" % (BASE, path)
-    req = urllib.request.Request(url, headers={"User-Agent": user_agent})
+    # 0.2.41: ask for gzip. /v3/trains is ~1.19 MB plain and ~113 KB gzipped
+    # (measured 2026-11-18); urllib does not decompress, so it is done here.
+    req = urllib.request.Request(url, headers={"User-Agent": user_agent,
+                                               "Accept-Encoding": "gzip"})
     try:
         open_fn = opener or urllib.request.urlopen
         with open_fn(req, timeout=timeout) as response:
             raw = response.read()
+        if raw[:2] == b"\x1f\x8b":  # gzip magic; JSON never starts with it
+            raw = gzip.decompress(raw)
     except urllib.error.HTTPError as err:
         if err.code == 429:
             raise RateLimited("HTTP 429 from %s" % path) from err

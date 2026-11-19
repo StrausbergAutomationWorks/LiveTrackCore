@@ -248,6 +248,46 @@ for code, exc, label in ((429, ac.RateLimited, "429 -> RateLimited, not absence"
     except Exception:
         check(label, False)
 
+# --- 0.2.41: gzip asked for, and a gzipped body decoded -------------------
+import gzip as _gz
+
+
+class GzResp(FakeResp):
+    def __init__(self, obj):
+        self._b = _gz.compress(_json.dumps(obj).encode("utf-8"))
+
+
+enc = []
+
+
+def gz_opener(req, timeout=None):
+    enc.append(req.get_header("Accept-encoding"))
+    return GzResp(FLEET)
+
+
+cgz = ac.AmtrakerClient(user_agent="SAW-test/1.0", opener=gz_opener)
+check("a gzipped fleet decodes to the same rows as a plain one",
+      len(cgz.trains()) == 3 and cgz.trains(provider="Via") == cli.trains(provider="Via"))
+check("Accept-Encoding: gzip is sent", enc == ["gzip"])
+check("a plain body is still read (a server that ignores the header)",
+      len(ac.AmtrakerClient(user_agent="SAW-test/1.0",
+                            opener=make_opener(FLEET, [])).trains()) == 3)
+
+
+class BadGz(FakeResp):
+    def __init__(self, obj):
+        self._b = b"\x1f\x8b" + b"not gzip"
+
+
+try:
+    ac.AmtrakerClient(user_agent="SAW-test/1.0",
+                      opener=lambda req, timeout=None: BadGz(None)).fetch_fleet()
+    check("a broken gzip body -> FeedUnavailable", False)
+except ac.FeedUnavailable:
+    check("a broken gzip body -> FeedUnavailable", True)
+except Exception:
+    check("a broken gzip body -> FeedUnavailable", False)
+
 check("RateLimited is distinguishable from FeedUnavailable",
       not issubclass(ac.FeedUnavailable, ac.RateLimited)
       and not issubclass(ac.RateLimited, ac.FeedUnavailable))

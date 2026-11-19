@@ -48,6 +48,11 @@ What it refuses to do, and why — each refusal came from a measurement:
 | HTTP 429 raises `RateLimited` | a non-200 must never be recorded as "no data" |
 | an empty `User-Agent` raises at construction | the server blocks such requests |
 
+Since 0.2.41 every request asks for gzip and the client decompresses the answer
+itself (`urllib` does not). Measured 2026-11-18: one read of `/v3/trains` is
+about 1.19 MB plain and 113 KB gzipped, so a 30-second poll comes to about
+0.3 GB a day instead of 3.4 GB.
+
 `amtraker` imports from `track`. Never the reverse.
 
 ## `saw_livetrack.gtfs` — GTFS and GTFS-Realtime
