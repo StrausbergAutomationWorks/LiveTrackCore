@@ -79,13 +79,28 @@ box = OTHERS + [{"id": "r", "url": BOX}]
 p = mc.plan(box, [IC], {BOX: mc.RowInfo(True, "0.1.0+6c6c569")})
 check("THE BOX TODAY: release 0.1.0 ties with the hand build and leaves it", not (p.create or p.update or p.delete))
 p = mc.plan(box, [IC, SH], {BOX: mc.RowInfo(True, "0.1.0+6c6c569")})
-check("a higher release replaces the hand row IN PLACE", p.update == [("r", SH.url)] and not p.create and not p.delete)
+check("0.2.42: a higher release does NOT touch the user's /local row (hacs/default#14500)",
+      not (p.create or p.update or p.delete))
+check("0.2.42: ...it reports the newer copy instead", p.user_older and p.user_url == BOX
+      and any("newer than the user's card row" in n for n in p.notes))
 p = mc.plan(box, [SH], {BOX: mc.RowInfo(True, "0.1.2-dev+abc")})
-check("a dev build above the release stays", not (p.create or p.update or p.delete))
+check("a dev build above the release stays", not (p.create or p.update or p.delete) and not p.user_older)
 p = mc.plan(box, [IC], {BOX: mc.RowInfo(False, "0.1.0+6c6c569")})
-check("hand row with its file gone is dead: replaced", p.update == [("r", IC.url)])
+check("0.2.42: user row with its file gone is NOT replaced, and nothing is added",
+      not (p.create or p.update or p.delete) and p.user_older)
 p = mc.plan(box, [IC], {BOX: mc.RowInfo(True, "1")})
 check("unknown version (README ?v=1, no header): left alone", not (p.create or p.update or p.delete))
+ELSE = "/somewhere/else/live-track-map-card.js?v=0.0.1"
+p = mc.plan(OTHERS + [{"id": "o", "url": ELSE}], [SH], {ELSE: mc.RowInfo(True, "0.0.1")})
+check("0.2.42: a user row at any other URL is never written either", not (p.create or p.update or p.delete)
+      and p.user_url == ELSE and p.user_older)
+p = mc.plan(OTHERS + [{"id": "o", "url": ELSE}], [SH], {ELSE: mc.RowInfo(True, "9.9.9")})
+check("0.2.42: user row newer than every offer: not reported as older", not p.user_older)
+BOX2 = "/local/other/live-track-map-card.js?v=0.1.0"
+p = mc.plan([{"id": "r", "url": BOX}, {"id": "r2", "url": BOX2}], [SH],
+            {BOX: mc.RowInfo(True, "0.1.0"), BOX2: mc.RowInfo(False, "0.1.0")})
+check("0.2.42: two user rows: the live one kept, the other reported, neither written",
+      p.user_url == BOX and p.user_duplicates == [BOX2] and not (p.create or p.update or p.delete))
 
 ic_row = [{"id": "s", "url": IC.url}]
 p = mc.plan(ic_row, [IC, SH], {IC.url: mc.RowInfo(True, IC.version)})
@@ -113,12 +128,16 @@ check("HACS: notes a newer release", p.hacs_older and p.hacs_url == HACS)
 
 p = mc.plan([{"id": "s", "url": IC.url}, {"id": "l", "url": BOX}], [SH],
             {IC.url: mc.RowInfo(True, IC.version), BOX: mc.RowInfo(True, "0.1.2-dev+q")})
-check("two rows: keep the highest (the dev row), delete ours, nothing else", p.delete == ["s"]
+check("two rows: the user's live row kept, ours deleted, nothing else", p.delete == ["s"]
       and not p.update and not p.user_duplicates)
 p = mc.plan([{"id": "l", "url": BOX}, {"id": "s", "url": IC.url}], [SH],
             {IC.url: mc.RowInfo(True, IC.version), BOX: mc.RowInfo(True, "0.0.9")})
-check("two rows, ours highest: user row reported, ours updated", p.user_duplicates == [BOX]
-      and p.update == [("s", SH.url)] and not p.delete)
+check("0.2.42: two rows, ours highest: the user's live row still wins, ours deleted",
+      p.delete == ["s"] and not p.update and not p.create and p.user_older)
+p = mc.plan([{"id": "l", "url": BOX}, {"id": "s", "url": IC.url}], [SH],
+            {IC.url: mc.RowInfo(True, IC.version), BOX: mc.RowInfo(False, "0.1.0")})
+check("0.2.42: user row dead, ours alive: ours kept and brought up, the user's untouched",
+      p.update == [("s", SH.url)] and not p.delete and not p.create)
 
 # --- uninstall --------------------------------------------------------------------------------
 p = mc.plan([{"id": "s", "url": IC.url}], [SH], {IC.url: mc.RowInfo(False, IC.version)},
@@ -146,6 +165,33 @@ p = mc.plan(y + [{"url": HACS, "type": "module"}], [SH], {HACS: mc.RowInfo(True,
 check("yaml, HACS row: nothing to ask", p.yaml_needs is None)
 
 check("dev offer cannot win against nothing-but-unparseable", mc.best_offer([mc.Offer("x", "junk", "u")]) is None)
+
+# --- the invariant, exhaustively (hacs/default#14500): writes touch ONLY our own rows -----------
+import itertools  # noqa: E402
+
+ROWS = {"saw_ic": IC.url, "saw_old": old.url, "local": BOX, "else": ELSE, "hacs": HACS}
+STATES = [mc.RowInfo(True, "0.0.9"), mc.RowInfo(True, "0.1.0+x"), mc.RowInfo(True, "9.9.9"),
+          mc.RowInfo(True, "1"), mc.RowInfo(False, "0.1.0")]
+bad = []
+n = 0
+for k in range(0, len(ROWS) + 1):
+    for names in itertools.combinations(ROWS, k):
+        rows = [{"id": nm, "url": ROWS[nm]} for nm in names]
+        for states in itertools.product(STATES, repeat=len(names)):
+            infos = {ROWS[nm]: st for nm, st in zip(names, states)}
+            for offers in ([IC], [SH], [IC, SH]):
+                for wd in (None, "live_track_intercity_rail"):
+                    p = mc.plan(rows, offers if wd is None else offers[1:], infos, withdrawn=wd)
+                    n += 1
+                    touched = set(p.delete) | {rid for rid, _ in p.update}
+                    if any(not nm.startswith("saw_") for nm in touched):
+                        bad.append((names, states, [o.domain for o in offers], wd, sorted(touched)))
+                    if p.create and any(not nm.startswith("saw_") for nm in names):
+                        bad.append(("create beside a user row", names, states))
+check("invariant over %d plans: no user, local, other or HACS row is ever updated or deleted,"
+      " and no row is created beside one" % n, not bad)
+if bad:
+    print("  first counterexample:", bad[0])
 
 failed = [n for n, ok in CHECKS if not ok]
 print("checks: %d   passed: %d   failed: %d" % (len(CHECKS), len(CHECKS) - len(failed), len(failed)))

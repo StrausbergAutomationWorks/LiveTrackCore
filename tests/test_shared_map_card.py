@@ -229,8 +229,8 @@ async def main():
     check("fake behaves like 2026.10.1: empty before load", coll.async_items() == [])
     await smc.async_offer_map_card(hass, SH, f[SH])
     rows = card_rows(coll)
-    check("hand row on the box UPDATED in place, not appended", len(rows) == 1 and rows[0]["id"] == "r"
-          and [w[0] for w in coll.writes] == ["update"])
+    check("0.2.42: the user's hand row is neither updated nor joined by a second row (hacs/default#14500)",
+          len(rows) == 1 and rows[0]["id"] == "r" and rows[0]["url"] == BOX and coll.writes == [])
 
     # 4. Two reconciles at once, no row: the lock leaves ONE row.
     hass, coll, f, _ = await fresh([AUTO], versions={IC: "0.1.0+aaaaaaa", SH: "0.1.0+aaaaaaa"})

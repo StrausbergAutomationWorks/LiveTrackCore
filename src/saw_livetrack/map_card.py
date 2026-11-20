@@ -12,7 +12,10 @@ unparseable is unknown and never replaced on version grounds. Integrations ship 
 bundles, so one version is one file.
 
 ONE ROW (67.3, damage 5). A card row is matched by FILE NAME, never by prefix (06_MAP_CONTRACT.md
-D9). Rows under /hacsfiles/ are never touched and never duplicated. Writes UPDATE in place.
+D9). Writes go ONLY to rows a Live Track integration made (/live_track_<domain>/map-card/...),
+and UPDATE them in place. Rows under /hacsfiles/, /local/ or any other URL are the user's: never
+updated, never deleted, never duplicated; a live one makes every integration stand down
+(0.2.42, hacs/default#14500 review).
 """
 
 from __future__ import annotations
@@ -167,6 +170,8 @@ class Plan:
     user_duplicates: list = field(default_factory=list)  # URLs of extra rows the user made
     hacs_url: str | None = None                          # a HACS row: integrations stand down
     hacs_older: bool = False                             # the winner is newer than the HACS copy
+    user_url: str | None = None                          # a row the user made: never written
+    user_older: bool = False                             # the winner is newer, or that row is dead
     yaml_needs: str | None = None                        # YAML mode: the URL to paste
     notes: list = field(default_factory=list)
 
@@ -247,6 +252,30 @@ def plan(rows, offers, infos, mode="storage", withdrawn=None):
         out.create = win.url
         out.notes.append("no card row: creating one")
         return out
+
+    # A card row the user made (/local/ or any URL not under /live_track_<domain>/map-card/) is
+    # the user's choice of copy: never updated, never deleted (hacs/default#14500 review). Live
+    # Track writes only its own rows. A live user row is treated like a HACS row: stand down.
+    user = [r for r in card if row_file(r["url"]).kind != SAW]
+    ours = [r for r in card if row_file(r["url"]).kind == SAW]
+    if user:
+        ukeep = max(user, key=lambda r: _rank(infos.get(r["url"], RowInfo(True, None))))
+        uinfo = infos.get(ukeep["url"], RowInfo(True, None))
+        out.user_url = ukeep["url"]
+        out.user_older = (not uinfo.alive) or compare(win.version, uinfo.version) == 1
+        out.user_duplicates = [r["url"] for r in user if r is not ukeep]
+        if not uinfo.alive:
+            out.notes.append("the user's card row %s serves no file: left alone" % ukeep["url"])
+        elif out.user_older:
+            out.notes.append("%s carries %s, newer than the user's card row (%s): left alone"
+                             % (win.domain, win.version, uinfo.version))
+        if uinfo.alive:
+            out.delete.extend(r["id"] for r in ours)
+            out.notes.append("the user's own card row loads the card: standing down")
+            return out
+        if not ours:
+            return out
+        card = ours
 
     keep = max(card, key=lambda r: _rank(infos.get(r["url"], RowInfo(True, None))))
     for r in card:
