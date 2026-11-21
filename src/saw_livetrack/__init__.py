@@ -162,6 +162,20 @@ Two submodules, deliberately separate:
                           registration's owner; one download, cached
                           (0.2.15). NOT imported here; no dependencies.
 
+  saw_livetrack.aircraft_photos
+                          A photo of an aircraft from Planespotters.net,
+                          looked up by hex when a viewer hovers it, one
+                          store and one 429/403 pause per instance; each
+                          consumer serves its own signed-in view (0.2.43;
+                          moved from Live Track Aircraft). NOT imported
+                          here; aiohttp imported only when it asks.
+  saw_livetrack.vessel_photos
+                          A photo of a vessel from Wikidata and Wikimedia
+                          Commons, by IMO and, when that finds nothing, by
+                          MMSI; one cache and one worker per instance
+                          (0.2.43; moved from Live Track Ships). NOT
+                          imported here; aiohttp imported only when it asks.
+
 `amtraker` and `gtfs` import from `track`. Never the reverse.
 
 Not affiliated with Amtrak, VIA Rail Canada, Brightline, VR, Fintraffic, Renfe,
@@ -198,4 +212,4 @@ from .amtraker import (  # noqa: F401
     speed_kmh,
 )
 
-__version__ = "0.2.42"
+__version__ = "0.2.43"
